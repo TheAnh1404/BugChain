@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BugChain | Secure Software Through Decentralized Bug Bounties</title>
+    <!-- Fonts and Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              background: '#15121b',
+              surface: '#15121b',
+              primary: '#d2bbff',
+              'on-primary': '#3f008e',
+              'primary-container': '#7c3aed',
+              'on-primary-container': '#ede0ff',
+              secondary: '#c6c6cf',
+              'on-secondary': '#2f3037',
+              'secondary-container': '#45464e',
+              'on-secondary-container': '#b4b4bd',
+              tertiary: '#ffb784',
+              'on-tertiary': '#4f2500',
+              'tertiary-container': '#a15100',
+              'on-tertiary-container': '#ffe0cd',
+              error: '#ffb4ab',
+              'error-container': '#93000a',
+              'on-error': '#690005',
+              'on-error-container': '#ffdad6',
+              'surface-variant': '#37333e',
+              'on-surface-variant': '#ccc3d8',
+              outline: '#958da1',
+              'outline-variant': '#4a4455',
+            },
+            spacing: {
+              gutter: '24px',
+              unit: '4px',
+              'margin-mobile': '16px',
+              'margin-desktop': '32px',
+              'container-max': '1440px'
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="custom-scrollbar bg-[#0A0A0A] text-[#e8dfee]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

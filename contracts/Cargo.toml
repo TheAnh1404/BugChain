@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "bug_bounty",
+    "bugchain",
+]
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
