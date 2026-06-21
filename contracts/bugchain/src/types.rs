@@ -20,6 +20,23 @@ pub enum ReportStatus {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Severity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RewardSuggestion {
+    pub min_xlm: i128,
+    pub recommended_xlm: i128,
+    pub max_xlm: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bounty {
     pub id: u64,
     pub owner: Address,

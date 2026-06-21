@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,9 +20,11 @@ impl BugBountyContract {
         if env.storage().instance().has(&DataKey::Owner) {
             panic!("Contract is already initialized");
         }
-        
+
         env.storage().instance().set(&DataKey::Owner, &owner);
-        env.storage().instance().set(&DataKey::RewardAmount, &reward_amount);
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardAmount, &reward_amount);
     }
 
     /// Submit a cryptographic hash representing a vulnerability report.
@@ -41,10 +43,8 @@ impl BugBountyContract {
         env.storage().persistent().set(&key, &0i32);
 
         // Emit report registration event
-        env.events().publish(
-            (symbol_short!("register"), report_id),
-            reporter,
-        );
+        env.events()
+            .publish((symbol_short!("register"), report_id), reporter);
     }
 
     /// Approve a report (triage success) and disburse the locked bounty reward directly to the researcher.
@@ -76,14 +76,20 @@ impl BugBountyContract {
         }
 
         // Fetch reward pool balance
-        let mut total_rewards: u128 = env.storage().instance().get(&DataKey::RewardAmount).unwrap();
+        let mut total_rewards: u128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::RewardAmount)
+            .unwrap();
         if payout_amount > total_rewards {
             panic!("Insufficient funds in the bounty escrow pool");
         }
 
         // Update reward balance
         total_rewards -= payout_amount;
-        env.storage().instance().set(&DataKey::RewardAmount, &total_rewards);
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardAmount, &total_rewards);
 
         // Set status to approved (1 = approved)
         env.storage().persistent().set(&key, &1i32);
@@ -106,6 +112,9 @@ impl BugBountyContract {
 
     /// Fetch the remaining reward pool balance.
     pub fn get_reward_pool(env: Env) -> u128 {
-        env.storage().instance().get(&DataKey::RewardAmount).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::RewardAmount)
+            .unwrap_or(0)
     }
 }

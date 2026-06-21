@@ -3,7 +3,7 @@ use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Byte
 use crate::errors::BugChainError;
 use crate::events;
 use crate::storage;
-use crate::types::{Bounty, BountyStatus, Report, ReportStatus};
+use crate::types::{Bounty, BountyStatus, Report, ReportStatus, RewardSuggestion, Severity};
 
 #[contract]
 pub struct BugChainContract;
@@ -217,5 +217,30 @@ impl BugChainContract {
 
     pub fn get_report(env: Env, report_id: u64) -> Report {
         storage::get_report(&env, report_id)
+    }
+
+    pub fn suggest_reward(_env: Env, severity: Severity) -> RewardSuggestion {
+        match severity {
+            Severity::Low => RewardSuggestion {
+                min_xlm: 25,
+                recommended_xlm: 50,
+                max_xlm: 100,
+            },
+            Severity::Medium => RewardSuggestion {
+                min_xlm: 100,
+                recommended_xlm: 250,
+                max_xlm: 500,
+            },
+            Severity::High => RewardSuggestion {
+                min_xlm: 500,
+                recommended_xlm: 1_000,
+                max_xlm: 2_500,
+            },
+            Severity::Critical => RewardSuggestion {
+                min_xlm: 2_500,
+                recommended_xlm: 5_000,
+                max_xlm: 10_000,
+            },
+        }
     }
 }

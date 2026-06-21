@@ -4,7 +4,7 @@ use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{token, Address, BytesN, Env};
 
 use crate::contract::{BugChainContract, BugChainContractClient};
-use crate::types::{BountyStatus, ReportStatus};
+use crate::types::{BountyStatus, ReportStatus, Severity};
 
 struct TestContext {
     env: Env,
@@ -78,6 +78,21 @@ fn create_report(ctx: &TestContext, bounty_id: u64) -> u64 {
 fn initialize_works() {
     let ctx = setup();
     ctx.client.initialize(&ctx.admin);
+}
+
+#[test]
+fn severity_reward_suggestions_are_available() {
+    let ctx = setup();
+
+    let low = ctx.client.suggest_reward(&Severity::Low);
+    assert_eq!(low.min_xlm, 25);
+    assert_eq!(low.recommended_xlm, 50);
+    assert_eq!(low.max_xlm, 100);
+
+    let critical = ctx.client.suggest_reward(&Severity::Critical);
+    assert_eq!(critical.min_xlm, 2_500);
+    assert_eq!(critical.recommended_xlm, 5_000);
+    assert_eq!(critical.max_xlm, 10_000);
 }
 
 #[test]
@@ -244,7 +259,8 @@ fn owner_cannot_approve_unrelated_report() {
     let report_id2 = create_report(&ctx, bounty_id2);
 
     // Attempt to approve report_id2 under bounty_id1
-    ctx.client.approve_report(&ctx.owner, &bounty_id1, &report_id2);
+    ctx.client
+        .approve_report(&ctx.owner, &bounty_id1, &report_id2);
 }
 
 #[test]
