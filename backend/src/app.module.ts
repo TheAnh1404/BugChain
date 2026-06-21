@@ -17,12 +17,14 @@ import { SecurityModule } from './security/security.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { UsersModule } from './users/users.module';
 import { WalletsModule } from './wallets/wallets.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     LoggingModule,
     PrismaModule,
+    EmailModule,
     SecurityModule,
     EventsModule,
     AuditLogsModule,
