@@ -8,6 +8,7 @@ export type BugChainEventType =
   | 'report_rejected'
   | 'reward_claimed'
   | 'bounty_refunded'
+  | 'notification_created'
   | 'transaction_updated';
 
 export type BugChainEventPayload = {
@@ -20,6 +21,9 @@ export type BugChainEventPayload = {
   transactionId?: string;
   transactionType?: string;
   transactionStatus?: string;
+  notificationId?: string;
+  notificationType?: string;
+  userId?: string;
   emittedAt: string;
 };
 
