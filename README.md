@@ -530,26 +530,111 @@ Only real Stellar Testnet hashes are documented.
 
 ## Validation Results
 
-- Frontend: `npm run lint`, `npm run build`, `npm run test`
+- Frontend: `npm run lint`, `npm run build`
 - Backend: `npm run lint`, `npm run build`, `npm run test`
 - Contracts: `cargo test` with 15 passing contract tests
 
-### Demo Video
+## Authentication & Session Architecture
 
-TODO: Add demo video
+BugChain features a production-ready authentication and authorization system.
 
-### Mobile Responsive Screenshots
+### 1. JWT Flow (Access and Refresh tokens)
+Access tokens are short-lived (15 minutes), while refresh tokens are long-lived (7 days) and are rotated upon every use. The access token contains the session ID (`sid`) which is verified against the database on every authenticated API request, allowing for instant session revocation.
 
-TODO: Add screenshots
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Backend API
+    participant DB as PostgreSQL
 
-### CI/CD Screenshots
+    Client->>API: POST /auth/login (credentials)
+    API->>API: Verify password (bcrypt 12 rounds)
+    API->>DB: Create UserSession record
+    API->>API: Generate Access Token (15m, includes sid)
+    API->>API: Generate Refresh Token (7d, includes sid)
+    API->>DB: Store SHA-256 hash of Refresh Token
+    API-->>Client: Return { accessToken, refreshToken, user }
+```
 
-TODO: Add screenshots
+### 2. Refresh Token Rotation & Reuse Detection
+To prevent refresh token theft, the backend rotates the refresh token on every `/auth/refresh` request. If a client attempts to reuse an old, rotated refresh token, the backend detects the mismatch, assumes the token was compromised, and instantly revokes all active sessions for that user.
 
-### Test Results
+```mermaid
+sequenceDiagram
+    actor Client
+    actor Attacker
+    participant API as Backend API
+    participant DB as PostgreSQL
 
-TODO: Add screenshots
+    Client->>API: POST /auth/refresh (refreshToken_A)
+    API->>DB: Check if session exists and is active
+    API->>DB: Compare SHA-256 hash of refreshToken_A
+    API->>DB: Update session with SHA-256 hash of refreshToken_B
+    API-->>Client: Return new tokens (accessToken_B, refreshToken_B)
+    
+    note over Attacker: Attacker gets access to leaked refreshToken_A
+    Attacker->>API: POST /auth/refresh (refreshToken_A)
+    API->>DB: Compare SHA-256 hash of refreshToken_A (mismatch!)
+    API->>API: Trigger Token Reuse Detection
+    API->>DB: Revoke all active sessions for user (revokedAt = now)
+    API-->>Attacker: Throw 401 Unauthorized
+```
 
-### Live Demo
+### 3. Session Revocation Flow
+Users can view and manage active sessions from the Account Settings screen. The frontend detects when the current session is revoked and automatically logs out the user.
 
-TODO: Add deployed URL
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Backend API
+    participant DB as PostgreSQL
+
+    Client->>API: DELETE /auth/sessions/:id
+    API->>DB: Mark session revokedAt = now
+    API-->>Client: Success
+    
+    note over Client: Next authenticated API request
+    Client->>API: GET /users/me (Bearer accessToken)
+    API->>API: Decode accessToken (extract sid)
+    API->>DB: Check if session is active (revoked!)
+    API-->>Client: Throw 401 Unauthorized (forces UI logout)
+```
+
+### 4. Password Recovery & Reset Flow
+The recovery flow implements security best practices:
+- Uses cryptographically secure random tokens.
+- Restricts reset token lifetime to 1 hour.
+- Invalidates all active sessions upon successful password reset to force re-authentication across all devices.
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Backend API
+    participant Email as EmailService
+    participant DB as PostgreSQL
+
+    Client->>API: POST /auth/forgot-password (email)
+    API->>DB: Generate reset token & expiry (1h)
+    API->>Email: Send reset link to user email
+    API-->>Client: Return generic success (prevent enumeration)
+    
+    note over Client: User clicks link
+    Client->>API: POST /auth/reset-password (token, newPassword)
+    API->>DB: Verify token is active and matches user
+    API->>API: Hash new password (bcrypt 12 rounds)
+    API->>DB: Update passwordHash & clear reset token
+    API->>DB: Revoke all active user sessions (revokedAt = now)
+    API-->>Client: Success (forces re-login)
+```
+
+### 5. Role-Based Access Control (RBAC)
+Role-based authorization is enforced at the controller level using NestJS guards and decorators.
+- Roles: `ADMIN`, `OWNER`, `HUNTER`, `REVIEWER`.
+- `ADMIN` has superuser bypass privileges.
+- API endpoints are protected using `@UseGuards(JwtAuthGuard, RolesGuard)` and `@Roles(...)`.
+
+### 6. Security Features
+- **Account Locking**: Accounts are locked for 15 minutes after 5 consecutive failed login attempts to prevent brute-force attacks.
+- **Password Strength**: Minimum 8 characters containing at least 1 uppercase letter, 1 lowercase letter, and 1 number (validated server-side).
+- **Hashed Refresh Tokens**: Refresh tokens are stored hashed (SHA-256) in the database.
+- **Security Audit Logs**: Track critical authentication events (`LOGIN_SUCCESS`, `LOGIN_FAILED`, `ACCOUNT_LOCKED`, `PASSWORD_CHANGED`, `PASSWORD_RESET`, `EMAIL_VERIFIED`, `SESSION_CREATED`, `SESSION_REVOKED`) with IP address and User Agent.
