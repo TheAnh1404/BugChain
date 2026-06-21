@@ -8,7 +8,9 @@ datasource db {
 }
 
 enum UserRole {
-  USER
+  OWNER
+  HUNTER
+  REVIEWER
   ADMIN
 }
 
@@ -58,20 +60,71 @@ enum TransactionStatus {
   FAILED
 }
 
+enum AuditAction {
+  CREATE_BOUNTY
+  SUBMIT_REPORT
+  APPROVE_REPORT
+  REJECT_REPORT
+  CLAIM_REWARD
+  REFUND_BOUNTY
+}
+
+enum EntityType {
+  BOUNTY
+  REPORT
+  TRANSACTION
+  ORGANIZATION
+  PROJECT
+}
+
+enum NotificationType {
+  REPORT_APPROVED
+  REPORT_REJECTED
+  REWARD_CLAIMED
+  BOUNTY_REFUNDED
+  NEW_REPORT
+}
+
+enum HunterBadge {
+  FIRST_REPORT
+  CRITICAL_FINDER
+  TOP_HUNTER
+  THOUSAND_XLM_EARNED
+}
+
+enum OrganizationRole {
+  OWNER
+  MEMBER
+  REVIEWER
+}
+
+enum ReviewAssignmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
-  id           String        @id @default(uuid()) @db.Uuid
-  email        String        @unique
-  username     String        @unique
-  passwordHash String
-  avatarUrl    String?
-  role         UserRole      @default(USER)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  wallets      Wallet[]
-  bounties     Bounty[]      @relation("BountyOwner")
-  reports      Report[]      @relation("ReportHunter")
-  reviews      Review[]      @relation("ReviewReviewer")
-  transactions Transaction[]
+  id                      String               @id @default(uuid()) @db.Uuid
+  email                   String               @unique
+  username                String               @unique
+  passwordHash            String
+  avatarUrl               String?
+  role                    UserRole             @default(HUNTER)
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  wallets                 Wallet[]
+  bounties                Bounty[]             @relation("BountyOwner")
+  reports                 Report[]             @relation("ReportHunter")
+  reviews                 Review[]             @relation("ReviewReviewer")
+  transactions            Transaction[]
+  auditLogs               AuditLog[]
+  notifications           Notification[]
+  reputationProfile       ReputationProfile?
+  reputationBadges        ReputationBadge[]
+  ownedOrganizations      Organization[]       @relation("OrganizationOwner")
+  organizationMemberships OrganizationMember[]
+  reviewAssignments       ReviewAssignment[]   @relation("ReviewAssignmentReviewer")
 }
 
 model Wallet {
@@ -91,6 +144,8 @@ model Wallet {
 model Bounty {
   id                 String        @id @default(uuid()) @db.Uuid
   ownerId            String        @db.Uuid
+  organizationId     String?       @db.Uuid
+  projectId          String?       @db.Uuid
   onchainBountyId    String?
   title              String
   description        String
@@ -107,10 +162,14 @@ model Bounty {
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
   owner              User          @relation("BountyOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  organization       Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  project            Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
   reports            Report[]
   transactions       Transaction[]
 
   @@index([ownerId])
+  @@index([organizationId])
+  @@index([projectId])
   @@index([severity])
   @@index([status])
 }
@@ -126,6 +185,9 @@ model Report {
   stepsToReproduce   String
   impact             String
   recommendation     String
+  encryptedContent   String?       @map("encrypted_content") @db.Text
+  iv                 String?
+  authTag            String?       @map("auth_tag")
   reportHash         String?
   txHash             String?       @unique
   stellarExplorerUrl String?
@@ -138,6 +200,7 @@ model Report {
   bounty             Bounty        @relation(fields: [bountyId], references: [id], onDelete: Restrict)
   hunter             User          @relation("ReportHunter", fields: [hunterId], references: [id], onDelete: Restrict)
   reviews            Review[]
+  reviewAssignments  ReviewAssignment[]
   transactions       Transaction[]
 
   @@index([bountyId])
@@ -149,6 +212,8 @@ model Review {
   id         String         @id @default(uuid()) @db.Uuid
   reportId   String         @db.Uuid
   reviewerId String         @db.Uuid
+  reviewerSlot Int          @default(1)
+  reviewRound  Int          @default(1)
   decision   ReviewDecision
   comment    String?
   createdAt  DateTime       @default(now())
@@ -157,6 +222,23 @@ model Review {
 
   @@index([reportId])
   @@index([reviewerId])
+}
+
+model ReviewAssignment {
+  id            String                 @id @default(uuid()) @db.Uuid
+  reportId      String                 @db.Uuid
+  reviewerId    String                 @db.Uuid
+  reviewerOrder Int
+  status        ReviewAssignmentStatus @default(PENDING)
+  createdAt     DateTime               @default(now())
+  reviewedAt    DateTime?
+  report        Report                 @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reviewer      User                   @relation("ReviewAssignmentReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@unique([reportId, reviewerId])
+  @@unique([reportId, reviewerOrder])
+  @@index([reviewerId])
+  @@index([status])
 }
 
 model Transaction {
@@ -178,4 +260,103 @@ model Transaction {
   @@index([reportId])
   @@index([type])
   @@index([status])
+}
+
+model AuditLog {
+  id         String      @id @default(uuid()) @db.Uuid
+  userId     String      @db.Uuid
+  action     AuditAction
+  entityType EntityType
+  entityId   String      @db.Uuid
+  txHash     String?
+  timestamp  DateTime    @default(now())
+  user       User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([timestamp])
+}
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+model ReputationProfile {
+  userId          String   @id @db.Uuid
+  approvedReports Int      @default(0)
+  rejectedReports Int      @default(0)
+  successRate     Float    @default(0)
+  earnedXLM       Decimal  @default(0) @db.Decimal(20, 7)
+  severityScore   Int      @default(0)
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ReputationBadge {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  badge     HunterBadge
+  awardedAt DateTime    @default(now())
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badge])
+  @@index([badge])
+}
+
+model Organization {
+  id          String               @id @default(uuid()) @db.Uuid
+  ownerId     String               @db.Uuid
+  name        String
+  slug        String               @unique
+  description String?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  owner       User                 @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members     OrganizationMember[]
+  projects    Project[]
+  bounties    Bounty[]
+
+  @@index([ownerId])
+}
+
+model OrganizationMember {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  userId         String           @db.Uuid
+  invitedById    String?          @db.Uuid
+  role           OrganizationRole @default(MEMBER)
+  invitedAt      DateTime         @default(now())
+  acceptedAt     DateTime?
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@index([role])
+}
+
+model Project {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  slug           String
+  description    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bounties       Bounty[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
 }
