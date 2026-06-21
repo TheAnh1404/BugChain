@@ -9,9 +9,18 @@ import ResearcherDashboard from './views/ResearcherDashboard';
 import AuthPage from './views/AuthPage';
 import ProfileSettings from './views/ProfileSettings';
 import CreateBounty from './views/CreateBounty';
+import AnalyticsDashboard from './views/AnalyticsDashboard';
+import OrganizationConsole from './views/OrganizationConsole';
 import { useAuth } from './context/AuthContext';
 
-const protectedViews = new Set(['dashboard', 'submit', 'profile', 'create-bounty']);
+const protectedViews = new Set([
+  'dashboard',
+  'submit',
+  'profile',
+  'create-bounty',
+  'analytics',
+  'organizations',
+]);
 
 function App() {
   const { isAuthenticated, isBootstrapping } = useAuth();
@@ -120,6 +129,14 @@ function App() {
           setCurrentView={setCurrentView}
         />
       );
+    }
+
+    if (currentView === 'analytics') {
+      return <AnalyticsDashboard />;
+    }
+
+    if (currentView === 'organizations') {
+      return <OrganizationConsole />;
     }
 
     return (

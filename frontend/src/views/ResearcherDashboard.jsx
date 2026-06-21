@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useBugChainEvents } from '../hooks/useBugChainEvents';
 import { bountyService } from '../services/bountyService';
 import { reportService } from '../services/reportService';
+import { reputationService } from '../services/reputationService';
 import { transactionService } from '../services/transactionService';
 import { walletService } from '../services/walletService';
 import { shortenAddress } from '../utils/shortenAddress';
@@ -45,6 +46,7 @@ export default function ResearcherDashboard({ setCurrentView }) {
   const [transactions, setTransactions] = useState([]);
   const [wallets, setWallets] = useState([]);
   const [recommendedBounties, setRecommendedBounties] = useState([]);
+  const [reputationProfile, setReputationProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -54,18 +56,20 @@ export default function ResearcherDashboard({ setCurrentView }) {
     }
     setError('');
     try {
-      const [reportResult, transactionResult, walletResult, bountyResult] =
+      const [reportResult, transactionResult, walletResult, bountyResult, reputationResult] =
         await Promise.all([
           reportService.mine({ limit: 10 }),
           transactionService.mine({ limit: 8 }),
           walletService.mine(),
           bountyService.list({ status: 'OPEN', limit: 3 }),
+          reputationService.me(),
         ]);
 
       setReports(reportResult.items);
       setTransactions(transactionResult.items);
       setWallets(walletResult);
       setRecommendedBounties(bountyResult.items);
+      setReputationProfile(reputationResult);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -155,7 +159,7 @@ export default function ResearcherDashboard({ setCurrentView }) {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-12">
             <div className="glass p-6 rounded-2xl relative overflow-hidden group hover:border-[#7c3aed]/40 transition-colors">
               <div className="flex justify-between items-start mb-4">
                 <div className="p-2.5 bg-[#7c3aed]/10 rounded-xl">
@@ -211,6 +215,25 @@ export default function ResearcherDashboard({ setCurrentView }) {
                 </span>
                 <span className="text-[#e8dfee] text-3xl font-bold mt-1.5">
                   {wallets.length}
+                </span>
+              </div>
+            </div>
+
+            <div className="glass p-6 rounded-2xl relative overflow-hidden group hover:border-[#7c3aed]/40 transition-colors">
+              <div className="flex justify-between items-start mb-4">
+                <div className="p-2.5 bg-emerald-500/10 rounded-xl">
+                  <span className="material-symbols-outlined text-emerald-300">military_tech</span>
+                </div>
+                <span className="text-[10px] font-mono text-emerald-300 uppercase font-bold bg-emerald-500/10 px-2.5 py-1 rounded-lg">
+                  {reputationProfile?.hunterLevel || 'Level 1'}
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[#ccc3d8] text-xs font-mono uppercase tracking-widest font-semibold">
+                  Severity Score
+                </span>
+                <span className="text-[#e8dfee] text-3xl font-bold mt-1.5">
+                  {reputationProfile?.severityScore ?? 0}
                 </span>
               </div>
             </div>
@@ -389,6 +412,46 @@ export default function ResearcherDashboard({ setCurrentView }) {
             </div>
 
             <div className="flex flex-col gap-6">
+              <div className="glass rounded-2xl p-6">
+                <h2 className="text-xl font-bold text-[#e8dfee] mb-6">Hunter Reputation</h2>
+                <div className="rounded-xl border border-[#4a4455]/40 bg-[#100d16] p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-bold text-[#e8dfee]">
+                        {reputationProfile?.hunterLevel || 'Level 1'}
+                      </p>
+                      <p className="mt-1 text-xs text-[#ccc3d8]">
+                        {reputationProfile?.successRate ?? 0}% approval rate
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-mono text-sm font-bold text-emerald-300">
+                        {Number(reputationProfile?.earnedXLM || 0).toLocaleString()} XLM
+                      </p>
+                      <p className="text-[10px] uppercase tracking-widest text-[#958da1]">
+                        Earned
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {(reputationProfile?.badges || []).length === 0 ? (
+                      <span className="rounded-lg border border-[#4a4455]/40 px-2 py-1 text-[10px] text-[#ccc3d8]">
+                        No badges yet
+                      </span>
+                    ) : (
+                      reputationProfile.badges.map((badge) => (
+                        <span
+                          key={badge.badge}
+                          className="rounded-lg border border-[#7c3aed]/30 bg-[#7c3aed]/10 px-2 py-1 font-mono text-[10px] font-bold text-[#d2bbff]"
+                        >
+                          {badge.badge.replace(/_/g, ' ')}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="glass rounded-2xl p-6">
                 <h2 className="text-xl font-bold text-[#e8dfee] mb-6">Wallets</h2>
                 {wallets.length === 0 ? (

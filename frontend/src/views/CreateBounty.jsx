@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   buildBountyMetadata,
   createBountyOnChain,
   hashBountyMetadata,
 } from '../lib/stellar';
 import { bountyService } from '../services/bountyService';
+import { organizationService } from '../services/organizationService';
 import { transactionService } from '../services/transactionService';
 
 const initialForm = {
@@ -16,6 +17,8 @@ const initialForm = {
   rewardAsset: 'XLM',
   deadline: '',
   status: 'DRAFT',
+  organizationId: '',
+  projectId: '',
 };
 
 export default function CreateBounty({ onCreated, setCurrentView }) {
@@ -24,11 +27,46 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
   const [progressMessage, setProgressMessage] = useState('');
   const [createdBounty, setCreatedBounty] = useState(null);
   const [chainResult, setChainResult] = useState(null);
+  const [rewardSuggestions, setRewardSuggestions] = useState({});
+  const [organizations, setOrganizations] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCreateBountyContext() {
+      try {
+        const [suggestions, orgs] = await Promise.all([
+          bountyService.rewardSuggestions(),
+          organizationService.list().catch(() => []),
+        ]);
+        if (isMounted) {
+          setRewardSuggestions(suggestions);
+          setOrganizations(orgs);
+        }
+      } catch {
+        if (isMounted) {
+          setRewardSuggestions({});
+        }
+      }
+    }
+
+    loadCreateBountyContext();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const updateField = (field, value) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => ({
+      ...prev,
+      [field]: value,
+      projectId: field === 'organizationId' ? '' : prev.projectId,
+    }));
   };
+
+  const selectedOrganization = organizations.find((org) => org.id === form.organizationId);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -57,6 +95,8 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
         deadline: metadata.deadline,
         status: 'DRAFT',
         metadataHash,
+        organizationId: form.organizationId || undefined,
+        projectId: form.projectId || undefined,
       });
 
       setProgressMessage('Creating pending transaction record...');
@@ -172,6 +212,11 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
               <option>HIGH</option>
               <option>CRITICAL</option>
             </select>
+            {rewardSuggestions[form.severity] && (
+              <p className="text-[11px] text-[#ccc3d8]">
+                Suggested: {rewardSuggestions[form.severity].recommendedXlm.toLocaleString()} XLM
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <label className="text-xs font-mono uppercase tracking-widest text-[#ccc3d8]">
@@ -239,6 +284,44 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
           </div>
           <div className="rounded-xl border border-[#4a4455]/40 bg-[#100d16] px-4 py-3 text-sm text-[#ccc3d8]">
             The metadata hash is generated with SHA-256 from title, description, scope, severity, reward amount, and deadline.
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="space-y-2">
+            <label className="text-xs font-mono uppercase tracking-widest text-[#ccc3d8]">
+              Organization
+            </label>
+            <select
+              value={form.organizationId}
+              onChange={(event) => updateField('organizationId', event.target.value)}
+              className="input-dark w-full rounded-xl px-4 py-3 text-sm"
+            >
+              <option value="">Personal bounty</option>
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-mono uppercase tracking-widest text-[#ccc3d8]">
+              Project
+            </label>
+            <select
+              value={form.projectId}
+              onChange={(event) => updateField('projectId', event.target.value)}
+              className="input-dark w-full rounded-xl px-4 py-3 text-sm"
+              disabled={!form.organizationId}
+            >
+              <option value="">No project</option>
+              {(selectedOrganization?.projects || []).map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 

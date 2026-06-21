@@ -58,6 +58,30 @@ export default function SideNavBar({ currentView, setCurrentView }) {
           <span className="material-symbols-outlined text-[20px]">description</span>
           Reports
         </button>
+
+        <button
+          onClick={() => setCurrentView(isAuthenticated ? 'analytics' : 'login')}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all font-medium text-sm text-left ${
+            currentView === 'analytics'
+              ? 'bg-[#45464e] text-[#b4b4bd] font-bold'
+              : 'text-[#ccc3d8] hover:bg-[#2c2833] hover:text-[#e8dfee]'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">monitoring</span>
+          Analytics
+        </button>
+
+        <button
+          onClick={() => setCurrentView(isAuthenticated ? 'organizations' : 'login')}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all font-medium text-sm text-left ${
+            currentView === 'organizations'
+              ? 'bg-[#45464e] text-[#b4b4bd] font-bold'
+              : 'text-[#ccc3d8] hover:bg-[#2c2833] hover:text-[#e8dfee]'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">corporate_fare</span>
+          Organizations
+        </button>
         
         <button 
           onClick={() => setCurrentView(isAuthenticated ? 'profile' : 'login')}

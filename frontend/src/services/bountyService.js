@@ -9,6 +9,10 @@ export const bountyService = {
     return apiRequest(`/bounties/${id}`, { auth: false });
   },
 
+  rewardSuggestions() {
+    return apiRequest('/bounties/reward-suggestions', { auth: false });
+  },
+
   create(payload) {
     return apiRequest('/bounties', {
       method: 'POST',
