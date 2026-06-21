@@ -6,6 +6,7 @@ export type AuthUser = {
   username: string;
   avatarUrl: string | null;
   role: UserRole;
+  sessionId?: string;
   createdAt: Date;
   updatedAt: Date;
 };

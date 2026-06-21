@@ -104,11 +104,31 @@ enum ReviewAssignmentStatus {
   REJECTED
 }
 
+enum SecurityLogAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  ACCOUNT_LOCKED
+  PASSWORD_CHANGED
+  PASSWORD_RESET
+  EMAIL_VERIFIED
+  SESSION_CREATED
+  SESSION_REVOKED
+}
+
 model User {
   id                      String               @id @default(uuid()) @db.Uuid
   email                   String               @unique
   username                String               @unique
   passwordHash            String
+  emailVerified           Boolean              @default(false)
+  emailVerificationToken  String?
+  emailVerificationExpires DateTime?
+  passwordResetToken      String?
+  passwordResetExpires    DateTime?
+  failedLoginAttempts     Int                  @default(0)
+  lockedUntil             DateTime?
+  lastLoginAt             DateTime?
+  lastPasswordChangedAt   DateTime?
   avatarUrl               String?
   role                    UserRole             @default(HUNTER)
   createdAt               DateTime             @default(now())
@@ -125,6 +145,45 @@ model User {
   ownedOrganizations      Organization[]       @relation("OrganizationOwner")
   organizationMemberships OrganizationMember[]
   reviewAssignments       ReviewAssignment[]   @relation("ReviewAssignmentReviewer")
+  sessions                UserSession[]
+  securityLogs            SecurityLog[]
+
+  @@index([emailVerificationToken])
+  @@index([passwordResetToken])
+}
+
+model UserSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  device           String?
+  ipAddress        String?
+  userAgent        String?
+  refreshTokenHash String?
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime
+  lastUsedAt       DateTime  @default(now())
+  revokedAt        DateTime?
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
+model SecurityLog {
+  id        String            @id @default(uuid()) @db.Uuid
+  userId    String?           @db.Uuid
+  action    SecurityLogAction
+  ip        String?
+  userAgent String?
+  timestamp DateTime          @default(now())
+  user      User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([timestamp])
+  @@map("security_logs")
 }
 
 model Wallet {

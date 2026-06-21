@@ -8,6 +8,7 @@ type JwtPayload = {
   sub: string;
   email: string;
   role: string;
+  sid: string;
 };
 
 @Injectable()
@@ -24,6 +25,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
+    if (!payload.sid) {
+      throw new UnauthorizedException('Authentication token missing session ID');
+    }
+
+    // Check if session is revoked or expired
+    const session = await this.prisma.userSession.findUnique({
+      where: { id: payload.sid },
+    });
+
+    if (!session || session.revokedAt || session.expiresAt < new Date()) {
+      throw new UnauthorizedException('Session has been revoked or expired');
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
       select: {
@@ -41,6 +55,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Invalid authentication token');
     }
 
-    return user;
+    // Return user with sessionId attached
+    return {
+      ...user,
+      sessionId: payload.sid,
+    };
   }
 }

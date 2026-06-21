@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import TopNavBar from './components/TopNavBar';
 import SideNavBar from './components/SideNavBar';
 import LandingPage from './views/LandingPage';
@@ -7,6 +7,7 @@ import BountyDetails from './views/BountyDetails';
 import SubmitReport from './views/SubmitReport';
 import ResearcherDashboard from './views/ResearcherDashboard';
 import AuthPage from './views/AuthPage';
+import VerifyEmail from './views/VerifyEmail';
 import ProfileSettings from './views/ProfileSettings';
 import CreateBounty from './views/CreateBounty';
 import AnalyticsDashboard from './views/AnalyticsDashboard';
@@ -26,6 +27,27 @@ function App() {
   const { isAuthenticated, isBootstrapping } = useAuth();
   const [currentView, setCurrentView] = useState('landing');
   const [selectedBountyId, setSelectedBountyId] = useState(null);
+  const [tokenParam, setTokenParam] = useState(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const path = window.location.pathname;
+
+    if ((path.includes('/verify-email') || window.location.href.includes('/verify-email')) && token) {
+      setTimeout(() => {
+        setTokenParam(token);
+        setCurrentView('verify-email');
+      }, 0);
+      window.history.replaceState({}, document.title, '/');
+    } else if ((path.includes('/reset-password') || window.location.href.includes('/reset-password')) && token) {
+      setTimeout(() => {
+        setTokenParam(token);
+        setCurrentView('reset-password');
+      }, 0);
+      window.history.replaceState({}, document.title, '/');
+    }
+  }, []);
 
   const handleSelectBounty = (bounty) => {
     setSelectedBountyId(bounty.id);
@@ -63,6 +85,14 @@ function App() {
 
     if (needsAuth && !isAuthenticated) {
       return <AuthPage mode="login" setCurrentView={setCurrentView} />;
+    }
+
+    if (currentView === 'verify-email') {
+      return <VerifyEmail token={tokenParam} setCurrentView={setCurrentView} />;
+    }
+
+    if (currentView === 'reset-password') {
+      return <AuthPage mode="reset-password" token={tokenParam} setCurrentView={setCurrentView} />;
     }
 
     if (currentView === 'landing') {

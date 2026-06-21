@@ -2,7 +2,12 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { authService } from '../services/authService';
 import { userService } from '../services/userService';
-import { clearStoredToken, getStoredToken, setStoredToken } from '../services/api';
+import {
+  clearStoredToken,
+  getStoredToken,
+  getStoredRefreshToken,
+  setStoredTokens,
+} from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -46,25 +51,73 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
+  // Listen to session expiry/logout events from API client
+  useEffect(() => {
+    const handleAuthLogout = () => {
+      setUser(null);
+    };
+    window.addEventListener('auth-logout', handleAuthLogout);
+    return () => window.removeEventListener('auth-logout', handleAuthLogout);
+  }, []);
+
   const register = async (payload) => {
     const result = await authService.register(payload);
-    setStoredToken(result.accessToken);
-    setUser(result.user);
     setAuthError('');
-    return result.user;
+    return result; // Success message, no token/login
   };
 
   const login = async (payload) => {
     const result = await authService.login(payload);
-    setStoredToken(result.accessToken);
+    setStoredTokens(result.accessToken, result.refreshToken);
     setUser(result.user);
     setAuthError('');
     return result.user;
   };
 
-  const logout = () => {
-    clearStoredToken();
-    setUser(null);
+  const logout = async () => {
+    const refreshToken = getStoredRefreshToken();
+    try {
+      if (refreshToken) {
+        await authService.logout(refreshToken);
+      }
+    } catch (error) {
+      console.error('Failed to logout on backend', error);
+    } finally {
+      clearStoredToken();
+      setUser(null);
+    }
+  };
+
+  const verifyEmail = async (token) => {
+    return await authService.verifyEmail(token);
+  };
+
+  const forgotPassword = async (email) => {
+    return await authService.forgotPassword(email);
+  };
+
+  const resetPassword = async (payload) => {
+    return await authService.resetPassword(payload);
+  };
+
+  const changePassword = async (payload) => {
+    return await authService.changePassword(payload);
+  };
+
+  const getSessions = async () => {
+    return await authService.getSessions();
+  };
+
+  const revokeSession = async (sessionId) => {
+    return await authService.revokeSession(sessionId);
+  };
+
+  const revokeOtherSessions = async () => {
+    return await authService.revokeOtherSessions();
+  };
+
+  const revokeAllSessions = async () => {
+    return await authService.revokeAllSessions();
   };
 
   const refreshMe = async () => {
@@ -88,6 +141,14 @@ export function AuthProvider({ children }) {
       register,
       login,
       logout,
+      verifyEmail,
+      forgotPassword,
+      resetPassword,
+      changePassword,
+      getSessions,
+      revokeSession,
+      revokeOtherSessions,
+      revokeAllSessions,
       refreshMe,
       updateProfile,
     }),
