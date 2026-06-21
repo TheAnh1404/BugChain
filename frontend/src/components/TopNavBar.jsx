@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useWallet } from '../hooks/useWallet';
+import NotificationBell from './NotificationBell';
 
 export default function TopNavBar({
   currentView,
@@ -76,8 +77,8 @@ export default function TopNavBar({
           >
             Dashboard
           </button>
-          <button 
-            onClick={() => setCurrentView(isAuthenticated ? 'create-bounty' : 'login')}
+            <button 
+              onClick={() => setCurrentView(isAuthenticated ? 'create-bounty' : 'login')}
             className={`font-medium pb-1 transition-all ${
               currentView === 'create-bounty'
                 ? 'text-[#d2bbff] border-b-2 border-[#d2bbff]' 
@@ -85,6 +86,26 @@ export default function TopNavBar({
             }`}
           >
             Launch
+          </button>
+          <button
+            onClick={() => setCurrentView(isAuthenticated ? 'analytics' : 'login')}
+            className={`font-medium pb-1 transition-all ${
+              currentView === 'analytics'
+                ? 'text-[#d2bbff] border-b-2 border-[#d2bbff]'
+                : 'text-[#ccc3d8] hover:text-[#e8dfee]'
+            }`}
+          >
+            Analytics
+          </button>
+          <button
+            onClick={() => setCurrentView(isAuthenticated ? 'organizations' : 'login')}
+            className={`font-medium pb-1 transition-all ${
+              currentView === 'organizations'
+                ? 'text-[#d2bbff] border-b-2 border-[#d2bbff]'
+                : 'text-[#ccc3d8] hover:text-[#e8dfee]'
+            }`}
+          >
+            Orgs
           </button>
           <button 
             onClick={() => setCurrentView(isAuthenticated ? 'profile' : 'login')}
@@ -97,6 +118,7 @@ export default function TopNavBar({
       <div className="flex items-center gap-4">
         {isAuthenticated ? (
           <>
+            <NotificationBell />
             <button
               onClick={() => setCurrentView('profile')}
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#221e28] border border-[#4a4455] hover:border-[#7c3aed]/60 transition-colors"

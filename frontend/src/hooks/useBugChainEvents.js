@@ -8,6 +8,7 @@ const BUGCHAIN_EVENT_TYPES = [
   'report_rejected',
   'reward_claimed',
   'bounty_refunded',
+  'notification_created',
   'transaction_updated',
 ];
 

@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "node test/shortenAddress.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@sentry/react": "^10.59.0",
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^16.0.1",
     "lucide-react": "^1.21.0",
