@@ -20,12 +20,10 @@ Your README must include:
 - [x] Screenshots:
   - **Wallet connected state**
     ![Wallet connected state](./screenshots/wallet_connected.png)
-  - **Balance displayed**
-    ![Balance displayed](./screenshots/wallet_connected.png)
+  - **Balance displayed** (within the Freighter extension pop-up)
   - **Successful testnet transaction**
     ![Successful testnet transaction](./screenshots/freighter_sign_message.png)
-  - **The transaction result is shown to the user**
-    ![The transaction result is shown to the user](./screenshots/wallet_connected.png)
+  - **The transaction result is shown to the user** (via the transaction records table in the dashboard UI)
 
 Submit your GitHub repository link below before the monthly deadline.
 
