@@ -17,7 +17,13 @@ export class ReviewsController {
     @Body() dto: ReviewReportDto,
   ) {
     return {
-      data: await this.reviewsService.approve(reportId, user, dto.comment, dto.txHash),
+      data: await this.reviewsService.approve(
+        reportId,
+        user,
+        dto.comment,
+        dto.txHash,
+        dto.transactionId,
+      ),
     };
   }
 
@@ -28,7 +34,13 @@ export class ReviewsController {
     @Body() dto: ReviewReportDto,
   ) {
     return {
-      data: await this.reviewsService.reject(reportId, user, dto.comment, dto.txHash),
+      data: await this.reviewsService.reject(
+        reportId,
+        user,
+        dto.comment,
+        dto.txHash,
+        dto.transactionId,
+      ),
     };
   }
 }

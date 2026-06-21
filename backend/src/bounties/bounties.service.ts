@@ -189,33 +189,13 @@ export class BountiesService {
         include: bountyInclude,
       });
 
-      const existingTransaction = await tx.transaction.findFirst({
-        where: {
-          bountyId: bounty.id,
-          type: TransactionType.CREATE_BOUNTY,
-        },
-        select: { id: true },
+      await this.completeTransaction(tx, {
+        transactionId: dto.transactionId,
+        userId: user.id,
+        bountyId: bounty.id,
+        txHash: dto.txHash,
+        type: TransactionType.CREATE_BOUNTY,
       });
-
-      if (existingTransaction) {
-        await tx.transaction.update({
-          where: { id: existingTransaction.id },
-          data: {
-            txHash: dto.txHash.toLowerCase(),
-            status: TransactionStatus.SUCCESS,
-          },
-        });
-      } else {
-        await tx.transaction.create({
-          data: {
-            userId: user.id,
-            bountyId: bounty.id,
-            txHash: dto.txHash.toLowerCase(),
-            type: TransactionType.CREATE_BOUNTY,
-            status: TransactionStatus.SUCCESS,
-          },
-        });
-      }
 
       return updatedBounty;
     });
@@ -246,14 +226,12 @@ export class BountiesService {
         include: bountyInclude,
       });
 
-      await tx.transaction.create({
-        data: {
-          userId: user.id,
-          bountyId: bounty.id,
-          txHash,
-          type: TransactionType.REFUND,
-          status: TransactionStatus.SUCCESS,
-        },
+      await this.completeTransaction(tx, {
+        transactionId: dto.transactionId,
+        userId: user.id,
+        bountyId: bounty.id,
+        txHash,
+        type: TransactionType.REFUND,
       });
 
       return updatedBounty;
@@ -320,6 +298,59 @@ export class BountiesService {
     if (new Date(deadline).getTime() <= Date.now()) {
       throw new BadRequestException('Bounty deadline must be in the future');
     }
+  }
+
+  private async completeTransaction(
+    tx: Prisma.TransactionClient,
+    data: {
+      transactionId?: string;
+      userId: string;
+      bountyId: string;
+      txHash: string;
+      type: TransactionType;
+    },
+  ) {
+    const txHash = data.txHash.toLowerCase();
+    const existing = data.transactionId
+      ? await tx.transaction.findFirst({
+          where: {
+            id: data.transactionId,
+            userId: data.userId,
+            bountyId: data.bountyId,
+            type: data.type,
+          },
+          select: { id: true },
+        })
+      : await tx.transaction.findFirst({
+          where: {
+            userId: data.userId,
+            bountyId: data.bountyId,
+            type: data.type,
+            status: TransactionStatus.PENDING,
+          },
+          select: { id: true },
+        });
+
+    if (existing) {
+      await tx.transaction.update({
+        where: { id: existing.id },
+        data: {
+          txHash,
+          status: TransactionStatus.SUCCESS,
+        },
+      });
+      return;
+    }
+
+    await tx.transaction.create({
+      data: {
+        userId: data.userId,
+        bountyId: data.bountyId,
+        txHash,
+        type: data.type,
+        status: TransactionStatus.SUCCESS,
+      },
+    });
   }
 
   private serializeBounty(bounty: BountyWithRelations) {

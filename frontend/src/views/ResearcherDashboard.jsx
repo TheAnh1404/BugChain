@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useBugChainEvents } from '../hooks/useBugChainEvents';
 import { bountyService } from '../services/bountyService';
 import { reportService } from '../services/reportService';
 import { transactionService } from '../services/transactionService';
@@ -17,6 +18,27 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function formatDateTime(value) {
+  if (!value) return '-';
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function getStatusClass(status) {
+  if (status === 'SUCCESS') {
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+  }
+  if (status === 'FAILED') {
+    return 'border-[#ffb4ab]/30 bg-[#93000a]/20 text-[#ffb4ab]';
+  }
+  return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+}
+
 export default function ResearcherDashboard({ setCurrentView }) {
   const { user } = useAuth();
   const [reports, setReports] = useState([]);
@@ -26,8 +48,10 @@ export default function ResearcherDashboard({ setCurrentView }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const refreshDashboard = async () => {
-    setIsLoading(true);
+  const refreshDashboard = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) {
+      setIsLoading(true);
+    }
     setError('');
     try {
       const [reportResult, transactionResult, walletResult, bountyResult] =
@@ -45,49 +69,23 @@ export default function ResearcherDashboard({ setCurrentView }) {
     } catch (err) {
       setError(err.message);
     } finally {
-      setIsLoading(false);
+      if (!quiet) {
+        setIsLoading(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
-    let isMounted = true;
-
     async function loadDashboard() {
-      setIsLoading(true);
-      setError('');
-
-      try {
-        const [reportResult, transactionResult, walletResult, bountyResult] =
-          await Promise.all([
-            reportService.mine({ limit: 10 }),
-            transactionService.mine({ limit: 8 }),
-            walletService.mine(),
-            bountyService.list({ status: 'OPEN', limit: 3 }),
-          ]);
-
-        if (isMounted) {
-          setReports(reportResult.items);
-          setTransactions(transactionResult.items);
-          setWallets(walletResult);
-          setRecommendedBounties(bountyResult.items);
-        }
-      } catch (err) {
-        if (isMounted) {
-          setError(err.message);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
+      await refreshDashboard();
     }
 
     loadDashboard();
+  }, [refreshDashboard]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  useBugChainEvents(() => {
+    refreshDashboard({ quiet: true });
+  }, Boolean(user));
 
   const handleClaim = async (report) => {
     setError('');
@@ -103,13 +101,25 @@ export default function ResearcherDashboard({ setCurrentView }) {
       const connection = await connectFreighterTestnet();
       const hunterAddress = connection.address;
 
-      const result = await claimRewardOnChain({
-        hunterAddress,
-        onchainBountyId: report.bounty.onchainBountyId,
-        onchainReportId: report.onchainReportId,
+      const pendingTransaction = await transactionService.start({
+        type: 'CLAIM_REWARD',
+        bountyId: report.bountyId,
+        reportId: report.id,
       });
 
-      await reportService.claimReward(report.id, result.txHash);
+      let result;
+      try {
+        result = await claimRewardOnChain({
+          hunterAddress,
+          onchainBountyId: report.bounty.onchainBountyId,
+          onchainReportId: report.onchainReportId,
+        });
+      } catch (txError) {
+        await transactionService.fail(pendingTransaction.id).catch(() => {});
+        throw txError;
+      }
+
+      await reportService.claimReward(report.id, result.txHash, pendingTransaction.id);
       await refreshDashboard();
     } catch (err) {
       setError(err.message);
@@ -351,10 +361,26 @@ export default function ResearcherDashboard({ setCurrentView }) {
                           <p className="mt-1 text-xs text-[#ccc3d8]">
                             {transaction.bounty?.title || transaction.report?.title || 'Account action'}
                           </p>
+                          <p className="mt-1 font-mono text-[10px] text-[#958da1]">
+                            {formatDateTime(transaction.createdAt)}
+                          </p>
                         </div>
-                        <span className="rounded-lg border border-[#7c3aed]/30 bg-[#7c3aed]/10 px-2.5 py-1 font-mono text-[10px] text-[#d2bbff]">
-                          {transaction.status}
-                        </span>
+                        <div className="flex flex-col items-end gap-2">
+                          <span className={`rounded-lg border px-2.5 py-1 font-mono text-[10px] ${getStatusClass(transaction.status)}`}>
+                            {transaction.status}
+                          </span>
+                          {transaction.txHash && (
+                            <a
+                              href={`https://stellar.expert/explorer/testnet/tx/${transaction.txHash}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] text-[#d2bbff] hover:underline"
+                            >
+                              <span className="material-symbols-outlined text-[12px]">open_in_new</span>
+                              Explorer
+                            </a>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>

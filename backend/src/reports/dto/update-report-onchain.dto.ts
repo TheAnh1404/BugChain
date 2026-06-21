@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
 
 export class UpdateReportOnChainDto {
   @IsString()
@@ -20,6 +20,10 @@ export class UpdateReportOnChainDto {
   @IsOptional()
   @IsString()
   stellarExplorerUrl?: string;
+
+  @IsOptional()
+  @IsUUID()
+  transactionId?: string;
 }
 export class ClaimRewardDto {
   @IsString()
@@ -27,4 +31,8 @@ export class ClaimRewardDto {
     message: 'txHash must be a 64-character Stellar transaction hash',
   })
   txHash: string;
+
+  @IsOptional()
+  @IsUUID()
+  transactionId?: string;
 }

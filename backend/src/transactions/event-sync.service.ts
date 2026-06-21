@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { rpc, scValToNative } from '@stellar/stellar-sdk';
 import { BountyStatus, ReportStatus, TransactionStatus, TransactionType } from '@prisma/client';
+import { EventsService } from '../events/events.service';
 
 @Injectable()
 export class EventSyncService implements OnModuleInit {
@@ -11,7 +12,10 @@ export class EventSyncService implements OnModuleInit {
   private server: rpc.Server;
   private lastLedger = 0;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventsService: EventsService,
+  ) {
     this.server = new rpc.Server(this.rpcUrl);
   }
 
@@ -67,11 +71,15 @@ export class EventSyncService implements OnModuleInit {
 
   private async processEvent(event: any) {
     try {
-      const txHash = event.txHash.toLowerCase();
+      const txHash = String(event.txHash || event.transactionHash || '').toLowerCase();
       const rawTopics = event.topic || [];
       const topics = rawTopics.map((t: any) => scValToNative(t));
       
       if (topics.length === 0) return;
+      if (!txHash) {
+        this.logger.warn('Skipping contract event without transaction hash');
+        return;
+      }
 
       const eventName = String(topics[0]);
       this.logger.log(`Detected event: ${eventName} in tx ${txHash}`);
@@ -90,23 +98,34 @@ export class EventSyncService implements OnModuleInit {
         });
 
         if (bounty) {
-          await this.prisma.bounty.update({
-            where: { id: bounty.id },
-            data: {
-              status: BountyStatus.OPEN,
-              onchainBountyId,
-              txHash,
-              stellarExplorerUrl: `https://stellar.expert/explorer/testnet/tx/${txHash}`,
-            },
-          });
+          if (bounty.status !== BountyStatus.OPEN || bounty.txHash !== txHash) {
+            await this.prisma.bounty.update({
+              where: { id: bounty.id },
+              data: {
+                status: BountyStatus.OPEN,
+                onchainBountyId,
+                txHash,
+                stellarExplorerUrl: `https://stellar.expert/explorer/testnet/tx/${txHash}`,
+              },
+            });
+          }
 
-          await this.ensureTransaction({
+          const transaction = await this.ensureTransaction({
             userId: bounty.ownerId,
             bountyId: bounty.id,
             txHash,
             type: TransactionType.CREATE_BOUNTY,
           });
+
+          this.emitTransactionUpdated(transaction);
         }
+
+        this.eventsService.emit('bounty_created', {
+          txHash,
+          bountyId: bounty?.id,
+          onchainBountyId,
+          transactionType: TransactionType.CREATE_BOUNTY,
+        });
       } 
       else if (eventName === 'report_submitted') {
         const onchainReportId = String(topics[1]);
@@ -124,24 +143,36 @@ export class EventSyncService implements OnModuleInit {
         });
 
         if (report) {
-          await this.prisma.report.update({
-            where: { id: report.id },
-            data: {
-              status: ReportStatus.PENDING,
-              onchainReportId,
-              txHash,
-              stellarExplorerUrl: `https://stellar.expert/explorer/testnet/tx/${txHash}`,
-            },
-          });
+          if (report.status !== ReportStatus.PENDING || report.txHash !== txHash) {
+            await this.prisma.report.update({
+              where: { id: report.id },
+              data: {
+                status: ReportStatus.PENDING,
+                onchainReportId,
+                txHash,
+                stellarExplorerUrl: `https://stellar.expert/explorer/testnet/tx/${txHash}`,
+              },
+            });
+          }
 
-          await this.ensureTransaction({
+          const transaction = await this.ensureTransaction({
             userId: report.hunterId,
             bountyId: report.bountyId,
             reportId: report.id,
             txHash,
             type: TransactionType.SUBMIT_REPORT,
           });
+
+          this.emitTransactionUpdated(transaction);
         }
+
+        this.eventsService.emit('report_submitted', {
+          txHash,
+          reportId: report?.id,
+          onchainBountyId,
+          onchainReportId,
+          transactionType: TransactionType.SUBMIT_REPORT,
+        });
       }
       else if (eventName === 'report_approved') {
         const onchainBountyId = String(topics[1]);
@@ -152,28 +183,43 @@ export class EventSyncService implements OnModuleInit {
           include: { bounty: true },
         });
 
-        if (report && report.status !== ReportStatus.APPROVED && report.status !== ReportStatus.PAID) {
-          await this.prisma.report.update({
-            where: { id: report.id },
-            data: {
-              status: ReportStatus.APPROVED,
-              approveTxHash: txHash,
-            },
-          });
+        if (report) {
+          if (report.status !== ReportStatus.APPROVED && report.status !== ReportStatus.PAID) {
+            await this.prisma.report.update({
+              where: { id: report.id },
+              data: {
+                status: ReportStatus.APPROVED,
+                approveTxHash: txHash,
+              },
+            });
+          }
 
-          await this.prisma.bounty.update({
-            where: { id: report.bountyId },
-            data: { status: BountyStatus.COMPLETED },
-          });
+          if (report.bounty.status !== BountyStatus.COMPLETED) {
+            await this.prisma.bounty.update({
+              where: { id: report.bountyId },
+              data: { status: BountyStatus.COMPLETED },
+            });
+          }
 
-          await this.ensureTransaction({
+          const transaction = await this.ensureTransaction({
             userId: report.bounty.ownerId,
             bountyId: report.bountyId,
             reportId: report.id,
             txHash,
             type: TransactionType.APPROVE_REPORT,
           });
+
+          this.emitTransactionUpdated(transaction);
         }
+
+        this.eventsService.emit('report_approved', {
+          txHash,
+          reportId: report?.id,
+          bountyId: report?.bountyId,
+          onchainBountyId,
+          onchainReportId,
+          transactionType: TransactionType.APPROVE_REPORT,
+        });
       }
       else if (eventName === 'report_rejected') {
         const onchainBountyId = String(topics[1]);
@@ -184,23 +230,36 @@ export class EventSyncService implements OnModuleInit {
           include: { bounty: true },
         });
 
-        if (report && report.status !== ReportStatus.REJECTED) {
-          await this.prisma.report.update({
-            where: { id: report.id },
-            data: {
-              status: ReportStatus.REJECTED,
-              rejectTxHash: txHash,
-            },
-          });
+        if (report) {
+          if (report.status !== ReportStatus.REJECTED) {
+            await this.prisma.report.update({
+              where: { id: report.id },
+              data: {
+                status: ReportStatus.REJECTED,
+                rejectTxHash: txHash,
+              },
+            });
+          }
 
-          await this.ensureTransaction({
+          const transaction = await this.ensureTransaction({
             userId: report.bounty.ownerId,
             bountyId: report.bountyId,
             reportId: report.id,
             txHash,
             type: TransactionType.REJECT_REPORT,
           });
+
+          this.emitTransactionUpdated(transaction);
         }
+
+        this.eventsService.emit('report_rejected', {
+          txHash,
+          reportId: report?.id,
+          bountyId: report?.bountyId,
+          onchainBountyId,
+          onchainReportId,
+          transactionType: TransactionType.REJECT_REPORT,
+        });
       }
       else if (eventName === 'reward_claimed') {
         const onchainBountyId = String(topics[1]);
@@ -211,23 +270,36 @@ export class EventSyncService implements OnModuleInit {
           include: { bounty: true },
         });
 
-        if (report && report.status !== ReportStatus.PAID) {
-          await this.prisma.report.update({
-            where: { id: report.id },
-            data: {
-              status: ReportStatus.PAID,
-              claimTxHash: txHash,
-            },
-          });
+        if (report) {
+          if (report.status !== ReportStatus.PAID) {
+            await this.prisma.report.update({
+              where: { id: report.id },
+              data: {
+                status: ReportStatus.PAID,
+                claimTxHash: txHash,
+              },
+            });
+          }
 
-          await this.ensureTransaction({
+          const transaction = await this.ensureTransaction({
             userId: report.hunterId,
             bountyId: report.bountyId,
             reportId: report.id,
             txHash,
             type: TransactionType.CLAIM_REWARD,
           });
+
+          this.emitTransactionUpdated(transaction);
         }
+
+        this.eventsService.emit('reward_claimed', {
+          txHash,
+          reportId: report?.id,
+          bountyId: report?.bountyId,
+          onchainBountyId,
+          onchainReportId,
+          transactionType: TransactionType.CLAIM_REWARD,
+        });
       }
       else if (eventName === 'bounty_refunded') {
         const onchainBountyId = String(topics[1]);
@@ -236,22 +308,33 @@ export class EventSyncService implements OnModuleInit {
           where: { onchainBountyId },
         });
 
-        if (bounty && bounty.status !== BountyStatus.REFUNDED) {
-          await this.prisma.bounty.update({
-            where: { id: bounty.id },
-            data: {
-              status: BountyStatus.REFUNDED,
-              refundTxHash: txHash,
-            },
-          });
+        if (bounty) {
+          if (bounty.status !== BountyStatus.REFUNDED || bounty.refundTxHash !== txHash) {
+            await this.prisma.bounty.update({
+              where: { id: bounty.id },
+              data: {
+                status: BountyStatus.REFUNDED,
+                refundTxHash: txHash,
+              },
+            });
+          }
 
-          await this.ensureTransaction({
+          const transaction = await this.ensureTransaction({
             userId: bounty.ownerId,
             bountyId: bounty.id,
             txHash,
             type: TransactionType.REFUND,
           });
+
+          this.emitTransactionUpdated(transaction);
         }
+
+        this.eventsService.emit('bounty_refunded', {
+          txHash,
+          bountyId: bounty?.id,
+          onchainBountyId,
+          transactionType: TransactionType.REFUND,
+        });
       }
     } catch (err) {
       this.logger.error(`Failed to process event: ${(err as any).message}`, err);
@@ -267,13 +350,30 @@ export class EventSyncService implements OnModuleInit {
   }) {
     const existing = await this.prisma.transaction.findFirst({
       where: {
-        txHash: data.txHash,
         type: data.type,
+        OR: [
+          { txHash: data.txHash },
+          {
+            userId: data.userId,
+            bountyId: data.bountyId || null,
+            reportId: data.reportId || null,
+            status: TransactionStatus.PENDING,
+          },
+        ],
       },
     });
 
-    if (!existing) {
-      await this.prisma.transaction.create({
+    if (existing) {
+      return this.prisma.transaction.update({
+        where: { id: existing.id },
+        data: {
+          txHash: data.txHash,
+          status: TransactionStatus.SUCCESS,
+        },
+      });
+    }
+
+    const transaction = await this.prisma.transaction.create({
         data: {
           userId: data.userId,
           bountyId: data.bountyId || null,
@@ -283,7 +383,26 @@ export class EventSyncService implements OnModuleInit {
           status: TransactionStatus.SUCCESS,
         },
       });
-      this.logger.log(`Created missing transaction record of type ${data.type} for tx ${data.txHash}`);
-    }
+    this.logger.log(`Created missing transaction record of type ${data.type} for tx ${data.txHash}`);
+
+    return transaction;
+  }
+
+  private emitTransactionUpdated(transaction: {
+    id: string;
+    bountyId: string | null;
+    reportId: string | null;
+    txHash: string | null;
+    type: TransactionType;
+    status: TransactionStatus;
+  }) {
+    this.eventsService.emit('transaction_updated', {
+      transactionId: transaction.id,
+      bountyId: transaction.bountyId || undefined,
+      reportId: transaction.reportId || undefined,
+      txHash: transaction.txHash || undefined,
+      transactionType: transaction.type,
+      transactionStatus: transaction.status,
+    });
   }
 }

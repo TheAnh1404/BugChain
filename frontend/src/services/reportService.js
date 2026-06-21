@@ -34,10 +34,10 @@ export const reportService = {
     });
   },
 
-  claimReward(id, txHash) {
+  claimReward(id, txHash, transactionId) {
     return apiRequest(`/reports/${id}/claim`, {
       method: 'PATCH',
-      body: { txHash },
+      body: { txHash, transactionId },
     });
   },
 };

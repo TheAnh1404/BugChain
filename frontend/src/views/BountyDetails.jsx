@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useBugChainEvents } from '../hooks/useBugChainEvents';
 import { bountyService } from '../services/bountyService';
 import { reportService } from '../services/reportService';
 import { reviewService } from '../services/reviewService';
@@ -16,6 +17,27 @@ function formatDate(value) {
     month: 'short',
     day: '2-digit',
   }).format(new Date(value));
+}
+
+function formatDateTime(value) {
+  if (!value) return 'Unknown';
+  return new Intl.DateTimeFormat('en', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function getStatusClass(status) {
+  if (status === 'SUCCESS') {
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+  }
+  if (status === 'FAILED') {
+    return 'border-[#ffb4ab]/30 bg-[#93000a]/20 text-[#ffb4ab]';
+  }
+  return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
 }
 
 export default function BountyDetails({ bountyId, onBack, onSubmitReport, onDeleted }) {
@@ -38,47 +60,46 @@ export default function BountyDetails({ bountyId, onBack, onSubmitReport, onDele
         .filter(Boolean)
     : [];
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadBounty() {
-      if (!bountyId) {
+  const refreshBountyDetails = useCallback(async ({ quiet = false } = {}) => {
+    if (!bountyId) {
+      if (!quiet) {
         setIsLoading(false);
-        return;
       }
-
-      setIsLoading(true);
-      setError('');
-
-      try {
-        const result = await bountyService.get(bountyId);
-        if (isMounted) {
-          setBounty(result);
-          setIsExpired(new Date(result.deadline).getTime() < Date.now());
-        }
-        if (isMounted && isAuthenticated) {
-          const txs = await transactionService.forBounty(bountyId);
-          setTransactions(txs.items || []);
-        }
-      } catch (err) {
-        if (isMounted) {
-          setError(err.message);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
+      return;
     }
 
-    loadBounty();
+    if (!quiet) {
+      setIsLoading(true);
+    }
+    setError('');
 
-    return () => {
-      isMounted = false;
-    };
+    try {
+      const result = await bountyService.get(bountyId);
+      setBounty(result);
+      setIsExpired(new Date(result.deadline).getTime() < Date.now());
+
+      if (isAuthenticated) {
+        const txs = await transactionService.forBounty(bountyId);
+        setTransactions(txs.items || []);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      if (!quiet) {
+        setIsLoading(false);
+      }
+    }
   }, [bountyId, isAuthenticated]);
 
-  const refreshOwnerReports = async () => {
+  useEffect(() => {
+    async function loadBountyDetails() {
+      await refreshBountyDetails();
+    }
+
+    loadBountyDetails();
+  }, [refreshBountyDetails]);
+
+  const refreshOwnerReports = useCallback(async () => {
     if (!bountyId) return;
     setIsReportsLoading(true);
 
@@ -90,35 +111,24 @@ export default function BountyDetails({ bountyId, onBack, onSubmitReport, onDele
     } finally {
       setIsReportsLoading(false);
     }
-  };
+  }, [bountyId]);
+
   useEffect(() => {
     if (!isOwner || !bountyId) return;
-    let isMounted = true;
 
-    async function loadReports() {
-      setIsReportsLoading(true);
-      try {
-        const result = await reportService.listForBounty(bountyId, { page: 1, limit: 25 });
-        if (isMounted) {
-          setOwnerReports(result.items);
-        }
-      } catch (err) {
-        if (isMounted) {
-          setError(err.message);
-        }
-      } finally {
-        if (isMounted) {
-          setIsReportsLoading(false);
-        }
-      }
+    async function loadOwnerReports() {
+      await refreshOwnerReports();
     }
 
-    loadReports();
+    loadOwnerReports();
+  }, [isOwner, bountyId, refreshOwnerReports]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [isOwner, bountyId]);
+  useBugChainEvents(() => {
+    refreshBountyDetails({ quiet: true });
+    if (isOwner) {
+      refreshOwnerReports();
+    }
+  }, Boolean(bountyId));
 
   const handleReview = async (reportId, decision) => {
     setError('');
@@ -142,36 +152,48 @@ export default function BountyDetails({ bountyId, onBack, onSubmitReport, onDele
       const connection = await connectFreighterTestnet();
       const ownerAddress = connection.address;
 
-      let txHash = '';
+      const transactionType = decision === 'approve' ? 'APPROVE_REPORT' : 'REJECT_REPORT';
+      setStatus('Creating pending transaction record...');
+      const pendingTransaction = await transactionService.start({
+        type: transactionType,
+        bountyId: bounty.id,
+        reportId,
+      });
+
+      let result;
+      try {
+        if (decision === 'approve') {
+          setStatus('Submitting approve_report to Soroban contract...');
+          result = await approveReportOnChain({
+            ownerAddress,
+            onchainBountyId: bounty.onchainBountyId,
+            onchainReportId: report.onchainReportId,
+          });
+        } else {
+          setStatus('Submitting reject_report to Soroban contract...');
+          result = await rejectReportOnChain({
+            ownerAddress,
+            onchainBountyId: bounty.onchainBountyId,
+            onchainReportId: report.onchainReportId,
+          });
+        }
+      } catch (txError) {
+        await transactionService.fail(pendingTransaction.id).catch(() => {});
+        throw txError;
+      }
+
+      const txHash = result.txHash;
       if (decision === 'approve') {
-        setStatus('Submitting approve_report to Soroban contract...');
-        const result = await approveReportOnChain({
-          ownerAddress,
-          onchainBountyId: bounty.onchainBountyId,
-          onchainReportId: report.onchainReportId,
-        });
-        txHash = result.txHash;
         setStatus('Syncing approval to BugChain API...');
-        await reviewService.approve(reportId, comment, txHash);
+        await reviewService.approve(reportId, comment, txHash, pendingTransaction.id);
         setStatus('Report approved successfully on-chain!');
       } else {
-        setStatus('Submitting reject_report to Soroban contract...');
-        const result = await rejectReportOnChain({
-          ownerAddress,
-          onchainBountyId: bounty.onchainBountyId,
-          onchainReportId: report.onchainReportId,
-        });
-        txHash = result.txHash;
         setStatus('Syncing rejection to BugChain API...');
-        await reviewService.reject(reportId, comment, txHash);
+        await reviewService.reject(reportId, comment, txHash, pendingTransaction.id);
         setStatus('Report rejected successfully on-chain!');
       }
       await refreshOwnerReports();
-      setBounty(await bountyService.get(bountyId));
-      if (isAuthenticated) {
-        const txs = await transactionService.forBounty(bountyId);
-        setTransactions(txs.items || []);
-      }
+      await refreshBountyDetails({ quiet: true });
     } catch (err) {
       setError(err.message);
       setStatus('');
@@ -195,21 +217,29 @@ export default function BountyDetails({ bountyId, onBack, onSubmitReport, onDele
       const connection = await connectFreighterTestnet();
       const ownerAddress = connection.address;
 
-      setStatus('Submitting refund_expired_bounty to Soroban contract...');
-      const result = await refundExpiredBountyOnChain({
-        ownerAddress,
-        onchainBountyId: bounty.onchainBountyId,
+      setStatus('Creating pending transaction record...');
+      const pendingTransaction = await transactionService.start({
+        type: 'REFUND',
+        bountyId: bounty.id,
       });
 
+      setStatus('Submitting refund_expired_bounty to Soroban contract...');
+      let result;
+      try {
+        result = await refundExpiredBountyOnChain({
+          ownerAddress,
+          onchainBountyId: bounty.onchainBountyId,
+        });
+      } catch (txError) {
+        await transactionService.fail(pendingTransaction.id).catch(() => {});
+        throw txError;
+      }
+
       setStatus('Syncing refund transaction to BugChain API...');
-      await bountyService.refundBounty(bounty.id, result.txHash);
+      await bountyService.refundBounty(bounty.id, result.txHash, pendingTransaction.id);
       setStatus('Bounty escrow refunded successfully!');
 
-      setBounty(await bountyService.get(bountyId));
-      if (isAuthenticated) {
-        const txs = await transactionService.forBounty(bountyId);
-        setTransactions(txs.items || []);
-      }
+      await refreshBountyDetails({ quiet: true });
     } catch (err) {
       setError(err.message);
       setStatus('');
@@ -341,8 +371,13 @@ export default function BountyDetails({ bountyId, onBack, onSubmitReport, onDele
                         </div>
                         <div>
                           <div className="flex items-center justify-between gap-4">
-                            <h4 className="font-bold text-sm text-[#e8dfee] font-mono">{tx.type}</h4>
-                            <span className="text-xs text-[#ccc3d8] font-mono">{formatDate(tx.createdAt)}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="font-bold text-sm text-[#e8dfee] font-mono">{tx.type}</h4>
+                              <span className={`rounded border px-2 py-0.5 font-mono text-[10px] ${getStatusClass(tx.status)}`}>
+                                {tx.status}
+                              </span>
+                            </div>
+                            <span className="text-xs text-[#ccc3d8] font-mono">{formatDateTime(tx.createdAt)}</span>
                           </div>
                           {tx.report && (
                             <p className="text-xs text-[#ccc3d8] mt-1">

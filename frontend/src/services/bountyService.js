@@ -30,10 +30,10 @@ export const bountyService = {
     });
   },
 
-  refundBounty(id, txHash) {
+  refundBounty(id, txHash, transactionId) {
     return apiRequest(`/bounties/${id}/refund`, {
       method: 'PATCH',
-      body: { txHash },
+      body: { txHash, transactionId },
     });
   },
 

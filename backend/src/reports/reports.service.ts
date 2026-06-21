@@ -221,34 +221,14 @@ export class ReportsService {
         include: reportInclude,
       });
 
-      const existingTransaction = await tx.transaction.findFirst({
-        where: {
-          reportId: report.id,
-          type: TransactionType.SUBMIT_REPORT,
-        },
-        select: { id: true },
+      await this.completeTransaction(tx, {
+        transactionId: dto.transactionId,
+        userId: user.id,
+        bountyId: report.bountyId,
+        reportId: report.id,
+        txHash,
+        type: TransactionType.SUBMIT_REPORT,
       });
-
-      if (existingTransaction) {
-        await tx.transaction.update({
-          where: { id: existingTransaction.id },
-          data: {
-            txHash,
-            status: TransactionStatus.SUCCESS,
-          },
-        });
-      } else {
-        await tx.transaction.create({
-          data: {
-            userId: user.id,
-            bountyId: report.bountyId,
-            reportId: report.id,
-            txHash,
-            type: TransactionType.SUBMIT_REPORT,
-            status: TransactionStatus.SUCCESS,
-          },
-        });
-      }
 
       return updatedReport;
     });
@@ -286,15 +266,13 @@ export class ReportsService {
         include: reportInclude,
       });
 
-      await tx.transaction.create({
-        data: {
-          userId: user.id,
-          bountyId: report.bountyId,
-          reportId: report.id,
-          txHash,
-          type: TransactionType.CLAIM_REWARD,
-          status: TransactionStatus.SUCCESS,
-        },
+      await this.completeTransaction(tx, {
+        transactionId: dto.transactionId,
+        userId: user.id,
+        bountyId: report.bountyId,
+        reportId: report.id,
+        txHash,
+        type: TransactionType.CLAIM_REWARD,
       });
 
       return updatedReport;
@@ -336,5 +314,62 @@ export class ReportsService {
       total,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  private async completeTransaction(
+    tx: Prisma.TransactionClient,
+    data: {
+      transactionId?: string;
+      userId: string;
+      bountyId: string;
+      reportId: string;
+      txHash: string;
+      type: TransactionType;
+    },
+  ) {
+    const txHash = data.txHash.toLowerCase();
+    const existing = data.transactionId
+      ? await tx.transaction.findFirst({
+          where: {
+            id: data.transactionId,
+            userId: data.userId,
+            bountyId: data.bountyId,
+            reportId: data.reportId,
+            type: data.type,
+          },
+          select: { id: true },
+        })
+      : await tx.transaction.findFirst({
+          where: {
+            userId: data.userId,
+            bountyId: data.bountyId,
+            reportId: data.reportId,
+            type: data.type,
+            status: TransactionStatus.PENDING,
+          },
+          select: { id: true },
+        });
+
+    if (existing) {
+      await tx.transaction.update({
+        where: { id: existing.id },
+        data: {
+          txHash,
+          status: TransactionStatus.SUCCESS,
+        },
+      });
+      return;
+    }
+
+    await tx.transaction.create({
+      data: {
+        userId: data.userId,
+        bountyId: data.bountyId,
+        reportId: data.reportId,
+        txHash,
+        type: data.type,
+        status: TransactionStatus.SUCCESS,
+      },
+    });
   }
 }

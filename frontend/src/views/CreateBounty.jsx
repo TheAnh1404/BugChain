@@ -5,6 +5,7 @@ import {
   hashBountyMetadata,
 } from '../lib/stellar';
 import { bountyService } from '../services/bountyService';
+import { transactionService } from '../services/transactionService';
 
 const initialForm = {
   title: '',
@@ -58,25 +59,43 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
         metadataHash,
       });
 
-      setProgressMessage('Submitting real Soroban transaction to Stellar Testnet...');
-      const onChainResult = await createBountyOnChain({
-        rewardAsset,
-        rewardAmount: metadata.rewardAmount,
-        deadline: metadata.deadline,
-        metadataHash,
+      setProgressMessage('Creating pending transaction record...');
+      const pendingTransaction = await transactionService.start({
+        type: 'CREATE_BOUNTY',
+        bountyId: savedBounty.id,
       });
+
+      setProgressMessage('Submitting real Soroban transaction to Stellar Testnet...');
+      let onChainResult;
+      try {
+        onChainResult = await createBountyOnChain({
+          rewardAsset,
+          rewardAmount: metadata.rewardAmount,
+          deadline: metadata.deadline,
+          metadataHash,
+        });
+      } catch (txError) {
+        await transactionService.fail(pendingTransaction.id).catch(() => {});
+        throw txError;
+      }
+
+      const trackedChainResult = {
+        ...onChainResult,
+        transactionId: pendingTransaction.id,
+      };
 
       setProgressMessage('Saving confirmed transaction hash to BugChain API...');
       let updatedBounty;
 
       try {
         updatedBounty = await bountyService.updateOnChain(savedBounty.id, {
-          onchainBountyId: onChainResult.onchainBountyId,
-          txHash: onChainResult.txHash,
+          onchainBountyId: trackedChainResult.onchainBountyId,
+          txHash: trackedChainResult.txHash,
           metadataHash,
+          transactionId: pendingTransaction.id,
         });
       } catch (updateError) {
-        setChainResult(onChainResult);
+        setChainResult(trackedChainResult);
         setError(
           `On-chain transaction succeeded, but BugChain API could not store it: ${updateError.message}`,
         );
@@ -85,7 +104,7 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
       }
 
       setCreatedBounty(updatedBounty);
-      setChainResult(onChainResult);
+      setChainResult(trackedChainResult);
       setForm(initialForm);
       setProgressMessage('');
     } catch (err) {

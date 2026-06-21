@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { bountyService } from '../services/bountyService';
 import { reportService } from '../services/reportService';
+import { transactionService } from '../services/transactionService';
 import { connectFreighterTestnet } from '../lib/freighter';
 import { hashReportMetadata, submitReportOnChain } from '../lib/stellar';
 
@@ -99,6 +100,7 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
         onchainReportId: chainResult.onchainReportId,
         reportHash: chainResult.reportHash,
         stellarExplorerUrl: chainResult.stellarExplorerUrl,
+        transactionId: chainResult.transactionId,
       });
       setIsSyncFailed(false);
       setSubmitSuccess(true);
@@ -187,6 +189,21 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
       return;
     }
 
+    let pendingTransaction;
+    try {
+      setProgressMessage('Creating pending transaction record...');
+      pendingTransaction = await transactionService.start({
+        type: 'SUBMIT_REPORT',
+        bountyId: form.bountyId,
+        reportId: savedReport.id,
+      });
+    } catch (err) {
+      setError(`Failed to start transaction tracking: ${err.message}`);
+      setIsSubmitting(false);
+      setProgressMessage('');
+      return;
+    }
+
     let onChainResult;
     try {
       setProgressMessage('Submitting real Soroban transaction to Stellar Testnet...');
@@ -196,6 +213,7 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
         reportHash,
       });
     } catch (err) {
+      await transactionService.fail(pendingTransaction.id).catch(() => {});
       setError(`Soroban transaction failed: ${err.message}`);
       setIsSubmitting(false);
       setProgressMessage('');
@@ -205,6 +223,7 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
     const fullChainResult = {
       ...onChainResult,
       reportHash,
+      transactionId: pendingTransaction.id,
     };
     setChainResult(fullChainResult);
 
@@ -215,6 +234,7 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
         onchainReportId: fullChainResult.onchainReportId,
         reportHash: fullChainResult.reportHash,
         stellarExplorerUrl: fullChainResult.stellarExplorerUrl,
+        transactionId: pendingTransaction.id,
       });
       setSubmitSuccess(true);
       setProgressMessage('');

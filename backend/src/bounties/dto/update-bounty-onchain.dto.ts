@@ -1,4 +1,4 @@
-import { IsString, Matches, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
 
 export class UpdateBountyOnChainDto {
   @IsString()
@@ -16,6 +16,10 @@ export class UpdateBountyOnChainDto {
     message: 'metadataHash must be a 32-byte SHA-256 hex string',
   })
   metadataHash: string;
+
+  @IsOptional()
+  @IsUUID()
+  transactionId?: string;
 }
 export class RefundBountyDto {
   @IsString()
@@ -23,4 +27,8 @@ export class RefundBountyDto {
     message: 'txHash must be a 64-character Stellar transaction hash',
   })
   txHash: string;
+
+  @IsOptional()
+  @IsUUID()
+  transactionId?: string;
 }

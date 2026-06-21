@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   BountyStatus,
+  Prisma,
   ReportStatus,
   ReviewDecision,
   TransactionStatus,
@@ -17,12 +18,24 @@ import { PrismaService } from '../prisma/prisma.service';
 @Injectable()
 export class ReviewsService {
   constructor(private readonly prisma: PrismaService) {}
-  async approve(reportId: string, reviewer: AuthUser, comment?: string, txHash?: string) {
-    return this.review(reportId, reviewer, ReviewDecision.APPROVE, comment, txHash);
+  async approve(
+    reportId: string,
+    reviewer: AuthUser,
+    comment?: string,
+    txHash?: string,
+    transactionId?: string,
+  ) {
+    return this.review(reportId, reviewer, ReviewDecision.APPROVE, comment, txHash, transactionId);
   }
 
-  async reject(reportId: string, reviewer: AuthUser, comment?: string, txHash?: string) {
-    return this.review(reportId, reviewer, ReviewDecision.REJECT, comment, txHash);
+  async reject(
+    reportId: string,
+    reviewer: AuthUser,
+    comment?: string,
+    txHash?: string,
+    transactionId?: string,
+  ) {
+    return this.review(reportId, reviewer, ReviewDecision.REJECT, comment, txHash, transactionId);
   }
 
   private async review(
@@ -31,6 +44,7 @@ export class ReviewsService {
     decision: ReviewDecision,
     comment?: string,
     txHash?: string,
+    transactionId?: string,
   ) {
     const report = await this.prisma.report.findUnique({
       where: { id: reportId },
@@ -103,26 +117,22 @@ export class ReviewsService {
           data: { status: BountyStatus.COMPLETED },
         });
 
-        await tx.transaction.create({
-          data: {
-            userId: reviewer.id,
-            bountyId: report.bountyId,
-            reportId,
-            type: TransactionType.APPROVE_REPORT,
-            status: TransactionStatus.SUCCESS,
-            txHash: txHash?.toLowerCase(),
-          },
+        await this.completeTransaction(tx, {
+          transactionId,
+          userId: reviewer.id,
+          bountyId: report.bountyId,
+          reportId,
+          type: TransactionType.APPROVE_REPORT,
+          txHash,
         });
       } else {
-        await tx.transaction.create({
-          data: {
-            userId: reviewer.id,
-            bountyId: report.bountyId,
-            reportId,
-            type: TransactionType.REJECT_REPORT,
-            status: TransactionStatus.SUCCESS,
-            txHash: txHash?.toLowerCase(),
-          },
+        await this.completeTransaction(tx, {
+          transactionId,
+          userId: reviewer.id,
+          bountyId: report.bountyId,
+          reportId,
+          type: TransactionType.REJECT_REPORT,
+          txHash,
         });
       }
 
@@ -130,4 +140,62 @@ export class ReviewsService {
     });
 
     return result;
-  }}
+  }
+
+  private async completeTransaction(
+    tx: Prisma.TransactionClient,
+    data: {
+      transactionId?: string;
+      userId: string;
+      bountyId: string;
+      reportId: string;
+      type: TransactionType;
+      txHash?: string;
+    },
+  ) {
+    const normalizedTxHash = data.txHash?.toLowerCase();
+    const existing = data.transactionId
+      ? await tx.transaction.findFirst({
+          where: {
+            id: data.transactionId,
+            userId: data.userId,
+            bountyId: data.bountyId,
+            reportId: data.reportId,
+            type: data.type,
+          },
+          select: { id: true },
+        })
+      : await tx.transaction.findFirst({
+          where: {
+            userId: data.userId,
+            bountyId: data.bountyId,
+            reportId: data.reportId,
+            type: data.type,
+            status: TransactionStatus.PENDING,
+          },
+          select: { id: true },
+        });
+
+    if (existing) {
+      await tx.transaction.update({
+        where: { id: existing.id },
+        data: {
+          txHash: normalizedTxHash,
+          status: TransactionStatus.SUCCESS,
+        },
+      });
+      return;
+    }
+
+    await tx.transaction.create({
+      data: {
+        userId: data.userId,
+        bountyId: data.bountyId,
+        reportId: data.reportId,
+        type: data.type,
+        status: TransactionStatus.SUCCESS,
+        txHash: normalizedTxHash,
+      },
+    });
+  }
+}
