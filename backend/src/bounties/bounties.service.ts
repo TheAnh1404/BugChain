@@ -5,12 +5,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AuditAction,
   BountyStatus,
+  EntityType,
+  NotificationType,
   Prisma,
   TransactionStatus,
   TransactionType,
+  UserRole,
 } from '@prisma/client';
+import { AuditLogsService } from '../audit/audit-logs.service';
 import { AuthUser } from '../common/types/auth-user.type';
+import { EventsService } from '../events/events.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { OrganizationsService } from '../organizations/organizations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBountyDto } from './dto/create-bounty.dto';
 import { QueryBountyDto } from './dto/query-bounty.dto';
@@ -25,6 +33,8 @@ const ownerSelect = {
 
 const bountyInclude = {
   owner: { select: ownerSelect },
+  organization: { select: { id: true, name: true, slug: true } },
+  project: { select: { id: true, name: true, slug: true } },
   _count: { select: { reports: true } },
 } satisfies Prisma.BountyInclude;
 
@@ -34,15 +44,30 @@ type BountyWithRelations = Prisma.BountyGetPayload<{
 
 @Injectable()
 export class BountiesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogsService: AuditLogsService,
+    private readonly eventsService: EventsService,
+    private readonly notificationsService: NotificationsService,
+    private readonly organizationsService: OrganizationsService,
+  ) {}
 
-  async create(ownerId: string, dto: CreateBountyDto) {
+  async create(ownerId: string, dto: CreateBountyDto, owner?: AuthUser) {
     this.ensureFutureDeadline(dto.deadline);
+    if (owner) {
+      await this.organizationsService.assertCanAttachBounty(
+        owner,
+        dto.organizationId,
+        dto.projectId,
+      );
+    }
 
     const bounty = await this.prisma.$transaction(async (tx) => {
       const created = await tx.bounty.create({
         data: {
           ownerId,
+          organizationId: dto.organizationId,
+          projectId: dto.projectId,
           onchainBountyId: dto.onchainBountyId,
           title: dto.title.trim(),
           description: dto.description.trim(),
@@ -55,6 +80,13 @@ export class BountiesService {
           metadataHash: dto.metadataHash,
         },
         include: bountyInclude,
+      });
+
+      await this.auditLogsService.recordWithClient(tx, {
+        userId: ownerId,
+        action: AuditAction.CREATE_BOUNTY,
+        entityType: EntityType.BOUNTY,
+        entityId: created.id,
       });
 
       return created;
@@ -123,7 +155,7 @@ export class BountiesService {
   }
 
   async update(id: string, user: AuthUser, dto: UpdateBountyDto) {
-    const bounty = await this.getBountyForOwner(id, user.id);
+    const bounty = await this.getBountyForOwner(id, user);
     const data = this.buildUpdateData(dto);
 
     if (dto.deadline) {
@@ -174,7 +206,7 @@ export class BountiesService {
   }
 
   async updateOnChain(id: string, user: AuthUser, dto: UpdateBountyOnChainDto) {
-    const bounty = await this.getBountyForOwner(id, user.id);
+    const bounty = await this.getBountyForOwner(id, user);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedBounty = await tx.bounty.update({
@@ -197,14 +229,29 @@ export class BountiesService {
         type: TransactionType.CREATE_BOUNTY,
       });
 
+      await this.auditLogsService.recordWithClient(tx, {
+        userId: user.id,
+        action: AuditAction.CREATE_BOUNTY,
+        entityType: EntityType.BOUNTY,
+        entityId: bounty.id,
+        txHash: dto.txHash,
+      });
+
       return updatedBounty;
+    });
+
+    this.eventsService.emit('bounty_created', {
+      bountyId: updated.id,
+      txHash: dto.txHash.toLowerCase(),
+      onchainBountyId: dto.onchainBountyId,
+      transactionType: TransactionType.CREATE_BOUNTY,
     });
 
     return this.serializeBounty(updated);
   }
 
   async refundBounty(id: string, user: AuthUser, dto: RefundBountyDto) {
-    const bounty = await this.getBountyForOwner(id, user.id);
+    const bounty = await this.getBountyForOwner(id, user);
 
     if (bounty.status !== BountyStatus.OPEN) {
       throw new BadRequestException('Bounty must be in OPEN status to be refunded');
@@ -234,14 +281,45 @@ export class BountiesService {
         type: TransactionType.REFUND,
       });
 
+      await this.auditLogsService.recordWithClient(tx, {
+        userId: user.id,
+        action: AuditAction.REFUND_BOUNTY,
+        entityType: EntityType.BOUNTY,
+        entityId: bounty.id,
+        txHash,
+      });
+
+      await this.notificationsService.createWithClient(tx, {
+        userId: bounty.ownerId,
+        type: NotificationType.BOUNTY_REFUNDED,
+        title: 'Bounty refunded',
+        message: `${bounty.title} escrow was refunded back to the owner wallet.`,
+      });
+
       return updatedBounty;
+    });
+
+    this.eventsService.emit('bounty_refunded', {
+      bountyId: updated.id,
+      txHash,
+      onchainBountyId: updated.onchainBountyId || undefined,
+      transactionType: TransactionType.REFUND,
     });
 
     return this.serializeBounty(updated);
   }
 
+  rewardSuggestions() {
+    return {
+      LOW: { minXlm: 25, recommendedXlm: 50, maxXlm: 100 },
+      MEDIUM: { minXlm: 100, recommendedXlm: 250, maxXlm: 500 },
+      HIGH: { minXlm: 500, recommendedXlm: 1000, maxXlm: 2500 },
+      CRITICAL: { minXlm: 2500, recommendedXlm: 5000, maxXlm: 10000 },
+    };
+  }
+
   async remove(id: string, user: AuthUser) {
-    const bounty = await this.getBountyForOwner(id, user.id);
+    const bounty = await this.getBountyForOwner(id, user);
     const reportsCount = await this.prisma.report.count({
       where: { bountyId: bounty.id },
     });
@@ -254,14 +332,14 @@ export class BountiesService {
     return { deleted: true };
   }
 
-  private async getBountyForOwner(id: string, userId: string) {
+  private async getBountyForOwner(id: string, user: AuthUser) {
     const bounty = await this.prisma.bounty.findUnique({ where: { id } });
 
     if (!bounty) {
       throw new NotFoundException('Bounty not found');
     }
 
-    if (bounty.ownerId !== userId) {
+    if (bounty.ownerId !== user.id && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Only the bounty owner can modify this bounty');
     }
 

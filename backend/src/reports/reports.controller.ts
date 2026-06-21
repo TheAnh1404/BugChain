@@ -8,8 +8,11 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
@@ -21,7 +24,8 @@ export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Post('bounties/:bountyId/reports')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HUNTER, UserRole.ADMIN)
   async create(
     @Param('bountyId') bountyId: string,
     @CurrentUser() user: AuthUser,
@@ -31,7 +35,8 @@ export class ReportsController {
   }
 
   @Get('bounties/:bountyId/reports')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HUNTER, UserRole.OWNER, UserRole.REVIEWER, UserRole.ADMIN)
   async listForBounty(
     @Param('bountyId') bountyId: string,
     @CurrentUser() user: AuthUser,
@@ -49,7 +54,8 @@ export class ReportsController {
   }
 
   @Get('reports/me')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HUNTER, UserRole.OWNER, UserRole.REVIEWER, UserRole.ADMIN)
   async listMine(
     @CurrentUser() user: AuthUser,
     @Query('page') page?: number,
@@ -61,13 +67,15 @@ export class ReportsController {
   }
 
   @Get('reports/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HUNTER, UserRole.OWNER, UserRole.REVIEWER, UserRole.ADMIN)
   async findOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return { data: await this.reportsService.findOne(id, user) };
   }
 
   @Patch('reports/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HUNTER, UserRole.ADMIN)
   async update(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -77,7 +85,8 @@ export class ReportsController {
   }
 
   @Patch('reports/:id/onchain')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HUNTER, UserRole.ADMIN)
   async updateOnChain(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -87,7 +96,8 @@ export class ReportsController {
   }
 
   @Patch('reports/:id/claim')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HUNTER, UserRole.ADMIN)
   async claimReward(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,

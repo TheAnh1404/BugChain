@@ -115,7 +115,22 @@ export class TransactionsService {
       throw new NotFoundException('Bounty not found');
     }
 
+    if (bounty.ownerId !== user.id && user.role !== UserRole.ADMIN) {
+      const relatedReport = await this.prisma.report.findFirst({
+        where: {
+          bountyId,
+          OR: [
+            { hunterId: user.id },
+            { reviewAssignments: { some: { reviewerId: user.id } } },
+          ],
+        },
+        select: { id: true },
+      });
 
+      if (!relatedReport) {
+        throw new ForbiddenException('You cannot view this bounty transaction timeline');
+      }
+    }
 
 
     const pagination = this.getPagination(page, limit);

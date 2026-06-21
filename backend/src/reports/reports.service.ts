@@ -5,15 +5,23 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AuditAction,
   BountyStatus,
+  EntityType,
+  NotificationType,
   Prisma,
   ReportStatus,
   TransactionStatus,
   TransactionType,
   UserRole,
 } from '@prisma/client';
+import { AuditLogsService } from '../audit/audit-logs.service';
 import { AuthUser } from '../common/types/auth-user.type';
+import { EventsService } from '../events/events.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReputationService } from '../reputation/reputation.service';
+import { ReportEncryptionService } from '../security/report-encryption.service';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
 import { UpdateReportOnChainDto, ClaimRewardDto } from './dto/update-report-onchain.dto';
@@ -26,6 +34,7 @@ const reportInclude = {
       ownerId: true,
       status: true,
       onchainBountyId: true,
+      rewardAmount: true,
     },
   },
   hunter: {
@@ -39,7 +48,16 @@ const reportInclude = {
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly encryptedPlaceholder = '[encrypted]';
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogsService: AuditLogsService,
+    private readonly eventsService: EventsService,
+    private readonly notificationsService: NotificationsService,
+    private readonly reputationService: ReputationService,
+    private readonly reportEncryptionService: ReportEncryptionService,
+  ) {}
 
   async create(bountyId: string, hunter: AuthUser, dto: CreateReportDto) {
     const bounty = await this.prisma.bounty.findUnique({
@@ -59,6 +77,13 @@ export class ReportsService {
       throw new BadRequestException('Reports can only be submitted to open bounties');
     }
 
+    const encrypted = this.reportEncryptionService.encrypt({
+      description: dto.description.trim(),
+      stepsToReproduce: dto.stepsToReproduce.trim(),
+      impact: dto.impact.trim(),
+      recommendation: dto.recommendation.trim(),
+    });
+
     const report = await this.prisma.$transaction(async (tx) => {
       const created = await tx.report.create({
         data: {
@@ -67,10 +92,13 @@ export class ReportsService {
           onchainReportId: dto.onchainReportId,
           title: dto.title.trim(),
           severity: dto.severity,
-          description: dto.description.trim(),
-          stepsToReproduce: dto.stepsToReproduce.trim(),
-          impact: dto.impact.trim(),
-          recommendation: dto.recommendation.trim(),
+          description: this.encryptedPlaceholder,
+          stepsToReproduce: this.encryptedPlaceholder,
+          impact: this.encryptedPlaceholder,
+          recommendation: this.encryptedPlaceholder,
+          encryptedContent: encrypted.encryptedContent,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
           reportHash: dto.reportHash,
           status: ReportStatus.DRAFT,
         },
@@ -80,7 +108,9 @@ export class ReportsService {
       return created;
     });
 
-    return report;
+    await this.reputationService.recordFirstReport(hunter.id);
+
+    return this.serializeReport(report);
   }
 
   async listForBounty(
@@ -117,7 +147,7 @@ export class ReportsService {
     ]);
 
     return {
-      items,
+      items: items.map((report) => this.serializeReport(report)),
       meta: this.buildMeta(total, pagination.page, pagination.limit),
     };
   }
@@ -137,7 +167,7 @@ export class ReportsService {
     ]);
 
     return {
-      items,
+      items: items.map((report) => this.serializeReport(report)),
       meta: this.buildMeta(total, pagination.page, pagination.limit),
     };
   }
@@ -161,7 +191,7 @@ export class ReportsService {
       throw new ForbiddenException('You cannot view this report');
     }
 
-    return report;
+    return this.serializeReport(report);
   }
 
   async update(id: string, user: AuthUser, dto: UpdateReportDto) {
@@ -184,11 +214,11 @@ export class ReportsService {
 
     const updated = await this.prisma.report.update({
       where: { id },
-      data: this.buildUpdateData(dto),
+      data: this.buildUpdateData(dto, report),
       include: reportInclude,
     });
 
-    return updated;
+    return this.serializeReport(updated);
   }
 
   async updateOnChain(id: string, user: AuthUser, dto: UpdateReportOnChainDto) {
@@ -230,10 +260,34 @@ export class ReportsService {
         type: TransactionType.SUBMIT_REPORT,
       });
 
+      await this.auditLogsService.recordWithClient(tx, {
+        userId: user.id,
+        action: AuditAction.SUBMIT_REPORT,
+        entityType: EntityType.REPORT,
+        entityId: report.id,
+        txHash,
+      });
+
+      await this.notificationsService.createWithClient(tx, {
+        userId: report.bounty.ownerId,
+        type: NotificationType.NEW_REPORT,
+        title: 'New report submitted',
+        message: `${user.username} submitted ${report.title} for ${report.bounty.title}.`,
+      });
+
       return updatedReport;
     });
 
-    return updated;
+    this.eventsService.emit('report_submitted', {
+      bountyId: report.bountyId,
+      reportId: report.id,
+      txHash,
+      onchainBountyId: report.bounty.onchainBountyId || undefined,
+      onchainReportId: dto.onchainReportId,
+      transactionType: TransactionType.SUBMIT_REPORT,
+    });
+
+    return this.serializeReport(updated);
   }
 
   async claimReward(id: string, user: AuthUser, dto: ClaimRewardDto) {
@@ -275,23 +329,71 @@ export class ReportsService {
         type: TransactionType.CLAIM_REWARD,
       });
 
+      await this.auditLogsService.recordWithClient(tx, {
+        userId: user.id,
+        action: AuditAction.CLAIM_REWARD,
+        entityType: EntityType.REPORT,
+        entityId: report.id,
+        txHash,
+      });
+
+      await this.notificationsService.createWithClient(tx, {
+        userId: report.hunterId,
+        type: NotificationType.REWARD_CLAIMED,
+        title: 'Reward claimed',
+        message: `Reward for ${report.title} was claimed on Stellar Testnet.`,
+      });
+
       return updatedReport;
     });
 
-    return updated;
+    await this.reputationService.recordRewardClaimed(user.id, report.bounty.rewardAmount);
+
+    this.eventsService.emit('reward_claimed', {
+      bountyId: report.bountyId,
+      reportId: report.id,
+      txHash,
+      onchainBountyId: report.bounty.onchainBountyId || undefined,
+      onchainReportId: report.onchainReportId || undefined,
+      transactionType: TransactionType.CLAIM_REWARD,
+    });
+
+    return this.serializeReport(updated);
   }
 
-  private buildUpdateData(dto: UpdateReportDto): Prisma.ReportUpdateInput {
+  private buildUpdateData(
+    dto: UpdateReportDto,
+    report: Prisma.ReportGetPayload<{ include: typeof reportInclude }>,
+  ): Prisma.ReportUpdateInput {
     const data: Prisma.ReportUpdateInput = {};
 
     if (dto.onchainReportId !== undefined) data.onchainReportId = dto.onchainReportId;
     if (dto.title !== undefined) data.title = dto.title.trim();
     if (dto.severity !== undefined) data.severity = dto.severity;
-    if (dto.description !== undefined) data.description = dto.description.trim();
-    if (dto.stepsToReproduce !== undefined) data.stepsToReproduce = dto.stepsToReproduce.trim();
-    if (dto.impact !== undefined) data.impact = dto.impact.trim();
-    if (dto.recommendation !== undefined) data.recommendation = dto.recommendation.trim();
     if (dto.reportHash !== undefined) data.reportHash = dto.reportHash;
+
+    if (
+      dto.description !== undefined ||
+      dto.stepsToReproduce !== undefined ||
+      dto.impact !== undefined ||
+      dto.recommendation !== undefined
+    ) {
+      const current = this.reportEncryptionService.decrypt(report);
+      const encrypted = this.reportEncryptionService.encrypt({
+        description: dto.description?.trim() ?? current.description,
+        stepsToReproduce: dto.stepsToReproduce?.trim() ?? current.stepsToReproduce,
+        impact: dto.impact?.trim() ?? current.impact,
+        recommendation: dto.recommendation?.trim() ?? current.recommendation,
+      });
+
+      data.description = this.encryptedPlaceholder;
+      data.stepsToReproduce = this.encryptedPlaceholder;
+      data.impact = this.encryptedPlaceholder;
+      data.recommendation = this.encryptedPlaceholder;
+      data.encryptedContent = encrypted.encryptedContent;
+      data.iv = encrypted.iv;
+      data.authTag = encrypted.authTag;
+    }
 
     return data;
   }
@@ -371,5 +473,22 @@ export class ReportsService {
         status: TransactionStatus.SUCCESS,
       },
     });
+  }
+
+  private serializeReport<T extends { encryptedContent?: string | null; iv?: string | null; authTag?: string | null }>(
+    report: T,
+  ) {
+    const decrypted = this.reportEncryptionService.decrypt(report);
+    const {
+      encryptedContent: _encryptedContent,
+      iv: _iv,
+      authTag: _authTag,
+      ...publicReport
+    } = report;
+
+    return {
+      ...publicReport,
+      ...decrypted,
+    };
   }
 }

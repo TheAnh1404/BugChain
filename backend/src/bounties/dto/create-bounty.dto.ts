@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   MinLength,
@@ -14,6 +15,14 @@ export class CreateBountyDto {
   @IsString()
   @MaxLength(128)
   onchainBountyId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  organizationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
 
   @IsString()
   @MinLength(3)
