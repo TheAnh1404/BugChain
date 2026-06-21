@@ -295,3 +295,261 @@ Level 3 work should be kept separate from this Level 2 completion:
 - Production event indexing with durable checkpoints and replay windows.
 - File storage for report attachments.
 - Automated end-to-end tests for wallet-driven browser flows.
+
+# Level 3
+
+## Level 3 Overview
+
+BugChain Level 3 upgrades the Level 2 hybrid Web2/Web3 bounty lifecycle into a production-ready release layer. The release adds encrypted report storage, explicit RBAC, audit logs, real-time notifications, hunter reputation, security analytics, organization/project support, CI/CD workflows, structured backend logging, and frontend/backend Sentry monitoring.
+
+The Level 2 Soroban escrow lifecycle remains intact. Level 3 extends it with a read-only severity reward suggestion helper and backend multi-reviewer assignment architecture without changing the deployed transaction flow.
+
+## Architecture Diagram
+
+```mermaid
+graph TD
+    Frontend[React + Vite Frontend]
+    SentryFE[Sentry Frontend]
+    SSE[GET /events/stream]
+    API[NestJS API]
+    Pino[Pino Structured Logs]
+    SentryBE[Sentry Backend]
+    DB[(PostgreSQL + Prisma)]
+    Crypto[AES-256-GCM Report Encryption]
+    Notify[Notifications]
+    Reputation[Reputation Profiles]
+    Analytics[Security Analytics]
+    Orgs[Organizations + Projects]
+    Freighter[Freighter Wallet]
+    RPC[Soroban RPC]
+    Contract[BugChain Soroban Contract]
+    Stellar[Stellar Testnet]
+
+    Frontend --> API
+    Frontend --> SSE
+    Frontend --> SentryFE
+    Frontend --> Freighter
+    API --> DB
+    API --> Crypto
+    API --> Notify
+    API --> Reputation
+    API --> Analytics
+    API --> Orgs
+    API --> Pino
+    API --> SentryBE
+    API --> SSE
+    Freighter --> RPC
+    RPC --> Contract
+    Contract --> Stellar
+```
+
+## Security Architecture
+
+- Report fields `description`, `impact`, `steps_to_reproduce`, and `recommendation` are encrypted before database storage with AES-256-GCM.
+- Database storage uses `encrypted_content`, `iv`, and `auth_tag`; legacy plaintext columns are retained for compatibility but new writes store the sensitive fields as encrypted placeholders.
+- Authorized read paths decrypt only after resource checks pass for the hunter, bounty owner, reviewer assignment, or admin.
+- RBAC roles are `OWNER`, `HUNTER`, `REVIEWER`, and `ADMIN`.
+- Permission matrix is implemented in `backend/src/common/security/permission-matrix.ts`.
+- Audit logs are written to `audit_logs` for `CREATE_BOUNTY`, `SUBMIT_REPORT`, `APPROVE_REPORT`, `REJECT_REPORT`, `CLAIM_REWARD`, and `REFUND_BOUNTY`.
+
+Required backend environment:
+
+```env
+DATABASE_URL=postgresql://...
+JWT_SECRET=replace-with-a-strong-secret
+REPORT_ENCRYPTION_KEY=64-hex-or-base64-32-byte-key
+```
+
+## Notification System
+
+Level 3 adds the `notifications` table and REST APIs:
+
+- `GET /notifications`
+- `GET /notifications/unread-count`
+- `PATCH /notifications/:id/read`
+- `PATCH /notifications/read-all`
+
+Notification types:
+
+- `REPORT_APPROVED`
+- `REPORT_REJECTED`
+- `REWARD_CLAIMED`
+- `BOUNTY_REFUNDED`
+- `NEW_REPORT`
+
+The frontend `NotificationBell` subscribes to `notification_created` SSE events, refreshes automatically, displays an unread counter, and supports marking notifications as read.
+
+## Reputation System
+
+Level 3 adds `reputation_profiles` and `reputation_badges`.
+
+Tracked profile fields:
+
+- `approvedReports`
+- `rejectedReports`
+- `successRate`
+- `earnedXLM`
+- `severityScore`
+
+Hunter levels:
+
+- Level 1
+- Level 2
+- Level 3
+- Elite Hunter
+
+Badges:
+
+- First Report
+- Critical Finder
+- Top Hunter
+- 1000 XLM Earned
+
+APIs:
+
+- `GET /reputation/me`
+- `GET /reputation/leaderboard`
+- `GET /reputation/users/:id`
+
+## Analytics System
+
+Level 3 adds the security analytics endpoint:
+
+```http
+GET /analytics/security
+```
+
+Metrics:
+
+- Total Bounties
+- Total Reports
+- Approval Rate
+- Average Resolution Time
+- Rewards Paid
+- Severity Distribution
+- Reports Over Time
+- Rewards Over Time
+- Hunter Leaderboard
+
+The frontend `AnalyticsDashboard` renders native responsive charts and refreshes from SSE lifecycle events.
+
+## Organization System
+
+Level 3 adds:
+
+- `organizations`
+- `organization_members`
+- `projects`
+
+APIs:
+
+- `POST /organizations`
+- `GET /organizations`
+- `GET /organizations/:id`
+- `POST /organizations/:id/members`
+- `POST /organizations/:id/projects`
+- `GET /organizations/:id/projects`
+
+Organization owners can invite existing users as members or reviewers, create projects, and attach new bounties to organization projects.
+
+## Deployment Guide
+
+Backend:
+
+```bash
+cd backend
+npm ci
+npx prisma migrate deploy
+npx prisma generate
+npm run build
+npm run start
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm ci
+npm run build
+npm run preview
+```
+
+Contracts:
+
+```bash
+cd contracts
+cargo test
+cargo build --target wasm32-unknown-unknown --release
+```
+
+## CI/CD Guide
+
+GitHub Actions workflows:
+
+- `.github/workflows/frontend-ci.yml`
+- `.github/workflows/backend-ci.yml`
+
+Both pipelines run install, lint, build, and tests for their workspace.
+
+## Monitoring Guide
+
+Frontend Sentry is enabled with:
+
+```env
+VITE_SENTRY_DSN=
+VITE_SENTRY_TRACES_SAMPLE_RATE=0.1
+```
+
+Backend Sentry is enabled with:
+
+```env
+SENTRY_DSN=
+SENTRY_TRACES_SAMPLE_RATE=0.1
+LOG_LEVEL=info
+```
+
+The backend uses Pino structured logs through Nest's logger interface and captures unhandled exceptions/rejections through Sentry when a DSN is configured.
+
+## Contract Address
+
+```text
+CBRSQQ3WTR4S32JKUMO2E3MA6P3EX5IH6YC6FR4HWIZFC72TBRXBNSCS
+```
+
+## Example Transaction Hashes
+
+Only real Stellar Testnet hashes are documented.
+
+| Action | Transaction Hash | Stellar Expert |
+| --- | --- | --- |
+| Create Bounty | `b1d1ae0ac1b6f783e34a6042f2ec776e0dcc54083860352e9fa61970de9c98a1` | [Open](https://stellar.expert/explorer/testnet/tx/b1d1ae0ac1b6f783e34a6042f2ec776e0dcc54083860352e9fa61970de9c98a1) |
+| Submit Report | `149b64983d26d92da9f9cc3c6c94056e6ff5a2e7341c761adde3bd5cf9b1de4e` | [Open](https://stellar.expert/explorer/testnet/tx/149b64983d26d92da9f9cc3c6c94056e6ff5a2e7341c761adde3bd5cf9b1de4e) |
+| Approve Report | `0a56ce22f0e7231604d9b5d857f7626920929086fb48ea928582375a1f656b6c` | [Open](https://stellar.expert/explorer/testnet/tx/0a56ce22f0e7231604d9b5d857f7626920929086fb48ea928582375a1f656b6c) |
+| Claim Reward | `57cdfcac4ad8c1438e3a7cb5ef78a9a04862a3351a8cd9ef6131721ce7ee0173` | [Open](https://stellar.expert/explorer/testnet/tx/57cdfcac4ad8c1438e3a7cb5ef78a9a04862a3351a8cd9ef6131721ce7ee0173) |
+| Refund Expired Bounty | `ccd55b08eb11c14b6eadb0c99527a8b7749f487fc32b9f9f43958114a4046e8b` | [Open](https://stellar.expert/explorer/testnet/tx/ccd55b08eb11c14b6eadb0c99527a8b7749f487fc32b9f9f43958114a4046e8b) |
+
+## Validation Results
+
+- Frontend: `npm run lint`, `npm run build`, `npm run test`
+- Backend: `npm run lint`, `npm run build`, `npm run test`
+- Contracts: `cargo test` with 15 passing contract tests
+
+### Demo Video
+
+TODO: Add demo video
+
+### Mobile Responsive Screenshots
+
+TODO: Add screenshots
+
+### CI/CD Screenshots
+
+TODO: Add screenshots
+
+### Test Results
+
+TODO: Add screenshots
+
+### Live Demo
+
+TODO: Add deployed URL
