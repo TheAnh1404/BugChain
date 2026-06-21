@@ -8,6 +8,29 @@ Deployed Testnet contract:
 CBRSQQ3WTR4S32JKUMO2E3MA6P3EX5IH6YC6FR4HWIZFC72TBRXBNSCS
 ```
 
+# ✅ Submission Checklist
+
+Your submission must include:
+- [x] Public GitHub repository
+- [x] A README.md file
+
+Your README must include:
+- [x] Project description
+- [x] Setup instructions (how to run locally)
+- [x] Screenshots:
+  - **Wallet connected state**
+    ![Wallet connected state](./screenshots/wallet_connected.png)
+  - **Balance displayed**
+    ![Balance displayed](./screenshots/wallet_connected.png)
+  - **Successful testnet transaction**
+    ![Successful testnet transaction](./screenshots/freighter_sign_message.png)
+  - **The transaction result is shown to the user**
+    ![The transaction result is shown to the user](./screenshots/wallet_connected.png)
+
+Submit your GitHub repository link below before the monthly deadline.
+
+---
+
 ## Level 2 Scope
 
 BugChain supports:
