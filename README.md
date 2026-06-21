@@ -8,22 +8,22 @@ Deployed Testnet contract:
 CBRSQQ3WTR4S32JKUMO2E3MA6P3EX5IH6YC6FR4HWIZFC72TBRXBNSCS
 ```
 
-# ✅ Submission Checklist
+# Level 1:
 
-Your submission must include:
-- [x] Public GitHub repository
-- [x] A README.md file
+Submission must include:
+- Public GitHub repository
+- README.md file
 
-Your README must include:
-- [x] Project description
-- [x] Setup instructions (how to run locally)
-- [x] Screenshots:
-  - **Wallet connected state**
+README must include:
+- Project description
+- Setup instructions (how to run locally)
+- Screenshots:
+  - Wallet connected state
     ![Wallet connected state](./screenshots/wallet_connected.png)
-  - **Balance displayed** (within the Freighter extension pop-up)
-  - **Successful testnet transaction**
+  - Balance displayed
+  - Successful testnet transaction
     ![Successful testnet transaction](./screenshots/freighter_sign_message.png)
-  - **The transaction result is shown to the user** (via the transaction records table in the dashboard UI)
+  - The transaction result is shown to the user
 
 Submit your GitHub repository link below before the monthly deadline.
 
