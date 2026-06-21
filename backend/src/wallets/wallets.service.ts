@@ -6,7 +6,8 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
+import { Keypair } from '@stellar/stellar-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletLinkDto } from './dto/wallet-link.dto';
 import { WalletNonceDto } from './dto/wallet-nonce.dto';
@@ -170,12 +171,59 @@ export class WalletsService {
     message: string,
     signature: string,
   ) {
-    // TODO: Implement real Freighter/Stellar signature verification before production.
-    // Freighter signs the exact verification message with the Testnet passphrase on the frontend.
-    // Keep this fallback isolated so production cannot silently accept unverified wallets.
-    return (
-      process.env.NODE_ENV !== 'production' &&
-      Boolean(walletAddress && message && signature)
-    );
+    try {
+      const keypair = Keypair.fromPublicKey(walletAddress);
+      const messageBytes = Buffer.from(message, 'utf8');
+      const messageDigest = createHash('sha256').update(messageBytes).digest();
+
+      return this.decodeSignatureCandidates(signature).some((candidate) => {
+        if (candidate.length !== 64) {
+          return false;
+        }
+
+        return (
+          keypair.verify(messageBytes, candidate) ||
+          keypair.verify(messageDigest, candidate)
+        );
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  private decodeSignatureCandidates(signature: string) {
+    const trimmed = signature?.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const candidates: Buffer[] = [];
+
+    if (/^[a-fA-F0-9]{128}$/.test(trimmed)) {
+      candidates.push(Buffer.from(trimmed, 'hex'));
+    }
+
+    candidates.push(Buffer.from(trimmed, 'base64'));
+
+    if (/[-_]/.test(trimmed)) {
+      candidates.push(
+        Buffer.from(trimmed.replace(/-/g, '+').replace(/_/g, '/'), 'base64'),
+      );
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (
+        parsed?.type === 'Buffer' &&
+        Array.isArray(parsed.data) &&
+        parsed.data.every((value: unknown) => Number.isInteger(value))
+      ) {
+        candidates.push(Buffer.from(parsed.data));
+      }
+    } catch {
+      // Freighter normally returns a base64 signature; JSON support is only for SDK wrappers.
+    }
+
+    return candidates;
   }
 }

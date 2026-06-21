@@ -79,8 +79,9 @@ export async function connectFreighterTestnet() {
   };
 }
 
-export async function signWalletVerificationMessage(message) {
+export async function signWalletVerificationMessage(message, address) {
   const result = await signMessage(message, {
+    address,
     networkPassphrase: STELLAR_TESTNET_PASSPHRASE,
   });
 
@@ -88,6 +89,13 @@ export async function signWalletVerificationMessage(message) {
 
   if (!result.signedMessage) {
     throw new Error('Freighter did not return a signature.');
+  }
+
+  if (
+    result.signerAddress &&
+    result.signerAddress.toUpperCase() !== address.toUpperCase()
+  ) {
+    throw new Error('Freighter signed with a different wallet address.');
   }
 
   return result.signedMessage;
@@ -100,7 +108,7 @@ export async function linkFreighterWallet() {
 
   const { address } = await connectFreighterTestnet();
   const nonceResponse = await walletService.createNonce(address);
-  const signature = await signWalletVerificationMessage(nonceResponse.message);
+  const signature = await signWalletVerificationMessage(nonceResponse.message, address);
 
   return walletService.link(address, nonceResponse.message, signature);
 }
