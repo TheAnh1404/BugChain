@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  InternalServerErrorException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { User, SecurityLogAction, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -19,6 +21,7 @@ const publicUserSelect = {
   email: true,
   username: true,
   avatarUrl: true,
+  rsaPublicKey: true,
   role: true,
   createdAt: true,
   updatedAt: true,
@@ -27,6 +30,7 @@ const publicUserSelect = {
 type PublicUser = Pick<
   User,
   'id' | 'email' | 'username' | 'avatarUrl' | 'role' | 'createdAt' | 'updatedAt'
+  | 'rsaPublicKey'
 >;
 
 @Injectable()
@@ -35,6 +39,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    private readonly config: ConfigService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -76,8 +81,8 @@ export class AuthService {
     try {
       await this.emailService.sendVerification(email, verificationToken);
     } catch (err) {
-      // In production, queue this or log error but do not break registration
       console.error('Failed to send verification email', err);
+      this.raiseEmailDeliveryErrorIfNeeded();
     }
 
     return {
@@ -377,10 +382,13 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
     });
+    const inlineResetEnabled = this.isInlinePasswordResetEnabled();
+    let resetUrl: string | undefined;
 
     if (user) {
       const resetToken = crypto.randomBytes(32).toString('hex');
       const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      resetUrl = this.buildPasswordResetUrl(resetToken);
 
       await this.prisma.user.update({
         where: { id: user.id },
@@ -390,10 +398,13 @@ export class AuthService {
         },
       });
 
-      try {
-        await this.emailService.sendPasswordReset(user.email, resetToken);
-      } catch (err) {
-        console.error('Failed to send reset password email', err);
+      if (!inlineResetEnabled) {
+        try {
+          await this.emailService.sendPasswordReset(user.email, resetToken);
+        } catch (err) {
+          console.error('Failed to send reset password email', err);
+          this.raiseEmailDeliveryErrorIfNeeded();
+        }
       }
 
       await this.logSecurityEvent(
@@ -406,7 +417,10 @@ export class AuthService {
 
     // Return generic message to prevent email enumeration
     return {
-      message: 'If that email is registered, we have sent password reset instructions.',
+      message: inlineResetEnabled
+        ? 'If that email is registered, use the reset link below.'
+        : 'If that email is registered, we have sent password reset instructions.',
+      ...(inlineResetEnabled && resetUrl ? { resetUrl } : {}),
     };
   }
 
@@ -543,9 +557,33 @@ export class AuthService {
       email: user.email,
       username: user.username,
       avatarUrl: user.avatarUrl,
+      rsaPublicKey: user.rsaPublicKey,
       role: user.role,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
+  }
+
+  private raiseEmailDeliveryErrorIfNeeded() {
+    const provider = this.config.get<string>('EMAIL_PROVIDER')?.toLowerCase();
+    const isProduction = this.config.get<string>('NODE_ENV') === 'production';
+
+    if (provider === 'smtp' && !isProduction) {
+      throw new InternalServerErrorException(
+        'Email delivery failed. Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM.',
+      );
+    }
+  }
+
+  private isInlinePasswordResetEnabled() {
+    const value = this.config.get<string>('DEV_INLINE_PASSWORD_RESET_LINK');
+    const isProduction = this.config.get<string>('NODE_ENV') === 'production';
+
+    return value?.toLowerCase() === 'true' && !isProduction;
+  }
+
+  private buildPasswordResetUrl(token: string) {
+    const frontendUrl = this.config.get<string>('FRONTEND_URL') || 'http://localhost:5173';
+    return `${frontendUrl}/reset-password?token=${token}`;
   }
 }

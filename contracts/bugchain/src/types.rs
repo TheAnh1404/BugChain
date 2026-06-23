@@ -5,6 +5,7 @@ use soroban_sdk::{contracttype, Address, BytesN};
 pub enum BountyStatus {
     Open,
     Completed,
+    Closed,
     Refunded,
     Cancelled,
 }
@@ -15,6 +16,7 @@ pub enum ReportStatus {
     Pending,
     Approved,
     Rejected,
+    Disputed,
     Paid,
 }
 
@@ -42,6 +44,8 @@ pub struct Bounty {
     pub owner: Address,
     pub asset: Address,
     pub reward_amount: i128,
+    pub total_escrowed: i128,
+    pub remaining_balance: i128,
     pub deadline: u64,
     pub metadata_hash: BytesN<32>,
     pub status: BountyStatus,
@@ -56,6 +60,7 @@ pub struct Report {
     pub hunter: Address,
     pub report_hash: BytesN<32>,
     pub status: ReportStatus,
+    pub payout_amount: i128,
     pub submitted_at: u64,
 }
 

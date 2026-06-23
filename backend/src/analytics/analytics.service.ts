@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ReportStatus, Severity } from '@prisma/client';
+import { ReportStatus, Severity, WalletInteractionAction } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReputationService } from '../reputation/reputation.service';
 
@@ -93,6 +93,107 @@ export class AnalyticsService {
       reportsOverTime: this.reportsOverTime(reports),
       rewardsOverTime: this.rewardsOverTime(paidReportRows),
       hunterLeaderboard: leaderboard,
+    };
+  }
+
+  async overview() {
+    const [
+      totalUsers,
+      walletConnectedUsers,
+      totalBounties,
+      totalReports,
+      totalWalletInteractions,
+      feedbackRating,
+      feedbackCount,
+    ] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({
+        where: { wallets: { some: { verifiedAt: { not: null } } } },
+      }),
+      this.prisma.bounty.count(),
+      this.prisma.report.count(),
+      this.prisma.userWalletInteraction.count(),
+      this.prisma.feedback.aggregate({ _avg: { rating: true } }),
+      this.prisma.feedback.count(),
+    ]);
+
+    return {
+      totalUsers,
+      walletConnectedUsers,
+      totalBounties,
+      totalReports,
+      totalWalletInteractions,
+      feedbackCount,
+      feedbackAverageRating: Number((feedbackRating._avg.rating || 0).toFixed(2)),
+    };
+  }
+
+  async funnel() {
+    const [
+      totalUsers,
+      verifiedUsers,
+      walletConnectedUsers,
+      firstActionUsers,
+      feedbackUsers,
+      completedUsers,
+    ] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { emailVerified: true } }),
+      this.prisma.user.count({
+        where: {
+          OR: [
+            { firstWalletConnectedAt: { not: null } },
+            { wallets: { some: { verifiedAt: { not: null } } } },
+          ],
+        },
+      }),
+      this.prisma.user.count({
+        where: {
+          OR: [
+            { firstBountyCreatedAt: { not: null } },
+            { firstReportSubmittedAt: { not: null } },
+            { bounties: { some: { txHash: { not: null } } } },
+            { reports: { some: { txHash: { not: null } } } },
+          ],
+        },
+      }),
+      this.prisma.user.count({ where: { feedback: { some: {} } } }),
+      this.prisma.user.count({ where: { onboardingCompleted: true } }),
+    ]);
+
+    return [
+      { step: 'Registered', count: totalUsers },
+      { step: 'Email verified', count: verifiedUsers },
+      { step: 'Wallet connected', count: walletConnectedUsers },
+      { step: 'First bounty or report', count: firstActionUsers },
+      { step: 'Feedback submitted', count: feedbackUsers },
+      { step: 'Onboarding completed', count: completedUsers },
+    ];
+  }
+
+  async walletInteractions() {
+    const [total, byAction, latest] = await Promise.all([
+      this.prisma.userWalletInteraction.count(),
+      this.prisma.userWalletInteraction.groupBy({
+        by: ['action'],
+        _count: { action: true },
+      }),
+      this.prisma.userWalletInteraction.findMany({
+        include: {
+          user: { select: { id: true, username: true, role: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
+    ]);
+
+    return {
+      total,
+      byAction: Object.values(WalletInteractionAction).map((action) => ({
+        action,
+        count: byAction.find((row) => row.action === action)?._count.action ?? 0,
+      })),
+      latest,
     };
   }
 

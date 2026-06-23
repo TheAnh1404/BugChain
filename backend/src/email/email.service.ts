@@ -11,19 +11,39 @@ class SmtpProvider implements EmailProvider {
   private from: string;
 
   constructor(config: ConfigService) {
-    const host = config.get<string>('SMTP_HOST') || 'localhost';
-    const port = Number(config.get<string>('SMTP_PORT')) || 1025;
+    const host = config.get<string>('SMTP_HOST')?.trim();
+    const portValue = config.get<string>('SMTP_PORT')?.trim();
     const user = config.get<string>('SMTP_USER');
     const pass = config.get<string>('SMTP_PASS');
-    this.from = config.get<string>('SMTP_FROM') || 'noreply@bugchain.dev';
+    this.from = config.get<string>('SMTP_FROM')?.trim() || user || 'noreply@bugchain.dev';
 
-    const auth = user && pass ? { user, pass } : undefined;
+    const missing = [
+      ['SMTP_HOST', host],
+      ['SMTP_PORT', portValue],
+      ['SMTP_USER', user],
+      ['SMTP_PASS', pass],
+      ['SMTP_FROM', this.from],
+    ]
+      .filter(([, value]) => !String(value || '').trim())
+      .map(([key]) => key);
+
+    if (missing.length > 0) {
+      throw new Error(`SMTP email provider requires: ${missing.join(', ')}`);
+    }
+
+    const port = Number(portValue);
+    if (!Number.isInteger(port) || port <= 0) {
+      throw new Error('SMTP_PORT must be a valid positive integer');
+    }
+
+    const secureSetting = config.get<string>('SMTP_SECURE')?.trim().toLowerCase();
+    const secure = secureSetting ? secureSetting === 'true' : port === 465;
 
     this.transporter = nodemailer.createTransport({
       host,
       port,
-      secure: port === 465,
-      auth,
+      secure,
+      auth: { user, pass },
     });
   }
 
@@ -54,25 +74,61 @@ ${text}
   }
 }
 
+class MissingSmtpConfigProvider implements EmailProvider {
+  constructor(private readonly missingKeys: string[]) {}
+
+  async sendMail(): Promise<void> {
+    throw new Error(`SMTP email delivery is not configured. Missing: ${this.missingKeys.join(', ')}`);
+  }
+}
+
 @Injectable()
 export class EmailService {
   private provider: EmailProvider;
   private readonly logger = new Logger(EmailService.name);
+  private sentEmails: Array<{
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+    sentAt: Date;
+  }> = [];
 
   constructor(private readonly config: ConfigService) {
     const providerName = this.config.get<string>('EMAIL_PROVIDER') || 'console';
     if (providerName.toLowerCase() === 'smtp') {
-      try {
+      const missingSmtpKeys = this.getMissingSmtpKeys();
+
+      if (missingSmtpKeys.length > 0) {
+        this.provider = new MissingSmtpConfigProvider(missingSmtpKeys);
+        this.logger.warn(
+          `EmailService requested SMTP, but SMTP is incomplete. Missing: ${missingSmtpKeys.join(', ')}`,
+        );
+      } else {
         this.provider = new SmtpProvider(this.config);
         this.logger.log('EmailService loaded with SMTP provider.');
-      } catch (err) {
-        this.logger.error('Failed to initialize SMTP provider, falling back to Console provider', err);
-        this.provider = new ConsoleProvider();
       }
     } else {
       this.provider = new ConsoleProvider();
       this.logger.log('EmailService loaded with Console provider (logs emails to terminal).');
     }
+  }
+
+  private getMissingSmtpKeys() {
+    return ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'].filter(
+      (key) => !String(this.config.get<string>(key) || '').trim(),
+    );
+  }
+
+  private trackEmail(to: string, subject: string, html: string, text: string) {
+    this.sentEmails.push({ to, subject, html, text, sentAt: new Date() });
+    if (this.sentEmails.length > 50) {
+      this.sentEmails.shift();
+    }
+  }
+
+  getSentEmails() {
+    return this.sentEmails;
   }
 
   async sendVerification(email: string, token: string) {
@@ -90,6 +146,7 @@ export class EmailService {
         <p style="font-size: 12px; color: #ccc3d8;">If the button doesn't work, copy and paste this URL into your browser: <br/> <a href="${url}" style="color: #d2bbff;">${url}</a></p>
       </div>
     `;
+    this.trackEmail(email, subject, html, text);
     await this.provider.sendMail(email, subject, html, text);
   }
 
@@ -109,6 +166,7 @@ export class EmailService {
         <p style="font-size: 12px; color: #ccc3d8;">If the button doesn't work, copy and paste this URL into your browser: <br/> <a href="${url}" style="color: #d2bbff;">${url}</a></p>
       </div>
     `;
+    this.trackEmail(email, subject, html, text);
     await this.provider.sendMail(email, subject, html, text);
   }
 }

@@ -13,6 +13,7 @@ export default function AuthPage({ mode: initialMode = 'login', token = null, se
   
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [resetUrl, setResetUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export default function AuthPage({ mode: initialMode = 'login', token = null, se
       setMode(initialMode);
       setError('');
       setSuccessMessage('');
+      setResetUrl('');
     }, 0);
   }, [initialMode]);
 
@@ -32,6 +34,7 @@ export default function AuthPage({ mode: initialMode = 'login', token = null, se
     setIsSubmitting(true);
     setError('');
     setSuccessMessage('');
+    setResetUrl('');
 
     try {
       if (mode === 'register') {
@@ -47,6 +50,7 @@ export default function AuthPage({ mode: initialMode = 'login', token = null, se
         setSuccessMessage(result.message || 'Registration successful! Please check your email to verify your account.');
       } else if (mode === 'forgot-password') {
         const result = await forgotPassword(form.email);
+        setResetUrl(result.resetUrl || '');
         setSuccessMessage(result.message || 'If that email is registered, we have sent password reset instructions.');
       } else if (mode === 'reset-password') {
         if (form.password !== form.confirmPassword) {
@@ -118,13 +122,24 @@ export default function AuthPage({ mode: initialMode = 'login', token = null, se
             <p className="text-sm text-[#ccc3d8] leading-relaxed">
               {successMessage}
             </p>
+            {resetUrl && (
+              <button
+                onClick={() => window.location.assign(resetUrl)}
+                className="w-full rounded-xl bg-[#7c3aed] px-5 py-3 font-bold text-[#ede0ff] transition-all hover:brightness-110"
+                type="button"
+              >
+                Reset Password Now
+              </button>
+            )}
             <button
               onClick={() => {
                 setSuccessMessage('');
+                setResetUrl('');
                 setMode('login');
                 setCurrentView('login');
               }}
-              className="w-full rounded-xl bg-[#7c3aed] px-5 py-3 font-bold text-[#ede0ff] transition-all hover:brightness-110"
+              className="w-full rounded-xl border border-[#4a4455] px-5 py-3 font-bold text-[#e8dfee] transition-all hover:bg-[#221e28]"
+              type="button"
             >
               Back to Sign In
             </button>
@@ -184,7 +199,7 @@ export default function AuthPage({ mode: initialMode = 'login', token = null, se
                   onChange={(event) => updateField('password', event.target.value)}
                   className="input-dark w-full rounded-xl px-4 py-3 text-sm"
                   type="password"
-                  placeholder={mode === 'login' ? '••••••••' : 'At least 8 chars (A-Z, a-z, 0-9)'}
+                  placeholder={mode === 'login' ? '********' : 'At least 8 chars (A-Z, a-z, 0-9)'}
                   minLength={8}
                   required
                 />

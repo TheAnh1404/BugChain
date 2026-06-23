@@ -13,6 +13,20 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bugchain
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: backend
@@ -20,6 +34,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/bugchain?schema=public
       JWT_SECRET: ci-jwt-secret
       REPORT_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      FRONTEND_URL: http://localhost:5173
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,11 +52,24 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
+
       - name: Lint
         run: npm run lint
 
       - name: Build
         run: npm run build
+
+      - name: Start API
+        run: |
+          npm run start > backend.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://localhost:3000/auth/dev-emails > /dev/null && exit 0
+            sleep 1
+          done
+          cat backend.log
+          exit 1
 
       - name: Tests
         run: npm run test

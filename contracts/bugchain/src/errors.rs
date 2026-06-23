@@ -21,4 +21,7 @@ pub enum BugChainError {
     BountyNotCompleted = 15,
     AlreadyClaimed = 16,
     NoApprovedReport = 17,
+    InvalidPayoutAmount = 18,
+    CannotEscalateNonRejectedReport = 19,
+    ReportNotDisputed = 20,
 }

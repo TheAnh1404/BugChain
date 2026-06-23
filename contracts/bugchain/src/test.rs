@@ -107,9 +107,90 @@ fn create_bounty_locks_reward_and_stores_bounty() {
     assert_eq!(bounty.id, bounty_id);
     assert_eq!(bounty.owner, ctx.owner);
     assert_eq!(bounty.reward_amount, 1_000);
+    assert_eq!(bounty.total_escrowed, 1_000);
+    assert_eq!(bounty.remaining_balance, 1_000);
     assert_eq!(bounty.status, BountyStatus::Open);
     assert_eq!(ctx.token.balance(&ctx.owner), owner_before - 1_000);
     assert_eq!(ctx.token.balance(&ctx.client.address), 1_000);
+}
+
+#[test]
+fn owner_can_deposit_and_partial_payout_multiple_reports() {
+    let ctx = initialized();
+    let deadline = ctx.env.ledger().timestamp() + 100;
+    let bounty_id = create_bounty(&ctx, 1_000, deadline);
+    ctx.client.deposit_funds(&ctx.owner, &bounty_id, &500);
+
+    let first_report_id = create_report(&ctx, bounty_id);
+    let second_report_id = create_report(&ctx, bounty_id);
+    let hunter_before = ctx.token.balance(&ctx.hunter);
+
+    ctx.client
+        .approve_report_with_payout(&ctx.owner, &bounty_id, &first_report_id, &400);
+    ctx.client
+        .approve_report_with_payout(&ctx.owner, &bounty_id, &second_report_id, &600);
+
+    let bounty = ctx.client.get_bounty(&bounty_id);
+    let first_report = ctx.client.get_report(&first_report_id);
+    let second_report = ctx.client.get_report(&second_report_id);
+
+    assert_eq!(ctx.token.balance(&ctx.hunter), hunter_before + 1_000);
+    assert_eq!(ctx.token.balance(&ctx.client.address), 500);
+    assert_eq!(bounty.status, BountyStatus::Open);
+    assert_eq!(bounty.total_escrowed, 1_500);
+    assert_eq!(bounty.remaining_balance, 500);
+    assert_eq!(first_report.status, ReportStatus::Paid);
+    assert_eq!(first_report.payout_amount, 400);
+    assert_eq!(second_report.status, ReportStatus::Paid);
+    assert_eq!(second_report.payout_amount, 600);
+}
+
+#[test]
+fn hunter_can_escalate_rejected_report_and_admin_can_pay_dispute() {
+    let ctx = initialized();
+    let deadline = ctx.env.ledger().timestamp() + 100;
+    let bounty_id = create_bounty(&ctx, 1_000, deadline);
+    let report_id = create_report(&ctx, bounty_id);
+
+    ctx.client.reject_report(&ctx.owner, &bounty_id, &report_id);
+    ctx.client.escalate_dispute(&ctx.hunter, &report_id);
+
+    let hunter_before = ctx.token.balance(&ctx.hunter);
+    ctx.client
+        .resolve_dispute(&ctx.admin, &bounty_id, &report_id, &true);
+
+    let bounty = ctx.client.get_bounty(&bounty_id);
+    let report = ctx.client.get_report(&report_id);
+
+    assert_eq!(ctx.token.balance(&ctx.hunter), hunter_before + 1_000);
+    assert_eq!(bounty.status, BountyStatus::Completed);
+    assert_eq!(bounty.remaining_balance, 0);
+    assert_eq!(report.status, ReportStatus::Paid);
+    assert_eq!(report.payout_amount, 1_000);
+}
+
+#[test]
+fn admin_can_reject_dispute_and_close_bounty() {
+    let ctx = initialized();
+    let deadline = ctx.env.ledger().timestamp() + 100;
+    let bounty_id = create_bounty(&ctx, 1_000, deadline);
+    let report_id = create_report(&ctx, bounty_id);
+
+    ctx.client.reject_report(&ctx.owner, &bounty_id, &report_id);
+    ctx.client.escalate_dispute(&ctx.hunter, &report_id);
+
+    let owner_before = ctx.token.balance(&ctx.owner);
+    ctx.client
+        .resolve_dispute(&ctx.admin, &bounty_id, &report_id, &false);
+
+    let bounty = ctx.client.get_bounty(&bounty_id);
+    let report = ctx.client.get_report(&report_id);
+
+    assert_eq!(ctx.token.balance(&ctx.owner), owner_before + 1_000);
+    assert_eq!(ctx.token.balance(&ctx.client.address), 0);
+    assert_eq!(bounty.status, BountyStatus::Closed);
+    assert_eq!(bounty.remaining_balance, 0);
+    assert_eq!(report.status, ReportStatus::Rejected);
 }
 
 #[test]

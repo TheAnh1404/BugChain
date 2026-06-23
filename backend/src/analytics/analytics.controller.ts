@@ -15,4 +15,19 @@ export class AnalyticsController {
   async securityDashboard() {
     return { data: await this.analyticsService.securityDashboard() };
   }
+
+  @Get('overview')
+  async overview() {
+    return { data: await this.analyticsService.overview() };
+  }
+
+  @Get('funnel')
+  async funnel() {
+    return { data: await this.analyticsService.funnel() };
+  }
+
+  @Get('wallet-interactions')
+  async walletInteractions() {
+    return { data: await this.analyticsService.walletInteractions() };
+  }
 }

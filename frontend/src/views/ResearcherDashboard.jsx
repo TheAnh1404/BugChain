@@ -9,6 +9,9 @@ import { walletService } from '../services/walletService';
 import { shortenAddress } from '../utils/shortenAddress';
 import { connectFreighterTestnet } from '../lib/freighter';
 import { claimRewardOnChain } from '../lib/stellar';
+import { trackEvent } from '../lib/analytics';
+import { normalizeTransactionError } from '../lib/errors';
+import OnboardingCard from '../components/OnboardingCard';
 
 function formatDate(value) {
   if (!value) return '-';
@@ -120,10 +123,11 @@ export default function ResearcherDashboard({ setCurrentView }) {
         });
       } catch (txError) {
         await transactionService.fail(pendingTransaction.id).catch(() => {});
-        throw txError;
+        throw new Error(normalizeTransactionError(txError).message, { cause: txError });
       }
 
       await reportService.claimReward(report.id, result.txHash, pendingTransaction.id);
+      trackEvent('reward_claimed', { reportId: report.id, txHash: result.txHash });
       await refreshDashboard();
     } catch (err) {
       setError(err.message);
@@ -159,6 +163,8 @@ export default function ResearcherDashboard({ setCurrentView }) {
         </div>
       ) : (
         <>
+          <OnboardingCard setCurrentView={setCurrentView} />
+
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-12">
             <div className="glass p-6 rounded-2xl relative overflow-hidden group hover:border-[#7c3aed]/40 transition-colors">
               <div className="flex justify-between items-start mb-4">

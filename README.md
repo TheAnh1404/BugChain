@@ -240,9 +240,32 @@ DATABASE_URL="postgresql://postgres:postgres@localhost:5432/bugchain?schema=publ
 JWT_SECRET="replace-with-a-strong-secret-or-random-key"
 JWT_EXPIRES_IN="7d"
 PORT=3000
+FRONTEND_URL="http://localhost:5173"
+EMAIL_PROVIDER="console"
 VITE_STELLAR_RPC_URL="https://soroban-testnet.stellar.org"
 VITE_CONTRACT_ID="CBRSQQ3WTR4S32JKUMO2E3MA6P3EX5IH6YC6FR4HWIZFC72TBRXBNSCS"
 ```
+
+Use `EMAIL_PROVIDER="console"` for local-only demos with `/auth/dev-emails`. To send verification and reset links to the user's real inbox, switch to SMTP:
+
+```env
+EMAIL_PROVIDER="smtp"
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER="your-gmail-address@gmail.com"
+SMTP_PASS="your-16-character-google-app-password"
+SMTP_FROM="your-gmail-address@gmail.com"
+FRONTEND_URL="http://localhost:5173"
+```
+
+For local demos where you do not want to send reset email, enable direct reset links in the UI:
+
+```env
+DEV_INLINE_PASSWORD_RESET_LINK=true
+```
+
+This is blocked in production because it lets anyone who knows a registered email request a reset link.
 
 Frontend (`frontend/.env.local`):
 
@@ -638,3 +661,232 @@ Role-based authorization is enforced at the controller level using NestJS guards
 - **Password Strength**: Minimum 8 characters containing at least 1 uppercase letter, 1 lowercase letter, and 1 number (validated server-side).
 - **Hashed Refresh Tokens**: Refresh tokens are stored hashed (SHA-256) in the database.
 - **Security Audit Logs**: Track critical authentication events (`LOGIN_SUCCESS`, `LOGIN_FAILED`, `ACCOUNT_LOCKED`, `PASSWORD_CHANGED`, `PASSWORD_RESET`, `EMAIL_VERIFIED`, `SESSION_CREATED`, `SESSION_REVOKED`) with IP address and User Agent.
+
+---
+
+## Level 4 - Green Belt Submission
+
+BugChain is prepared as a production MVP for product validation with real users. Level 4 keeps the existing authentication, Freighter wallet linking, Soroban Testnet transactions, transaction timeline, and contract flows intact while adding production UX, onboarding, feedback, wallet interaction proof tracking, analytics, monitoring, CI/CD, and deployment-ready configuration.
+
+### Production MVP Overview
+
+- Hybrid Web2 + Web3 bounty lifecycle: account auth, wallet linking, bounty creation, report submission, review, reward claim, and refund.
+- Real Stellar Testnet transaction hashes are stored and linked to Stellar Expert.
+- Level 4 product validation surfaces are available for onboarding, feedback, analytics, and user wallet interaction proofs.
+- The app now includes global error boundaries, toast notifications, loading states, empty states, API error handling, transaction error handling, and retry actions.
+
+### Live Demo
+
+TODO: Add live demo link
+
+Backend URL:
+
+TODO: Add deployed backend URL
+
+### Contract Deployment Address
+
+```text
+CBRSQQ3WTR4S32JKUMO2E3MA6P3EX5IH6YC6FR4HWIZFC72TBRXBNSCS
+```
+
+### Example Real Transaction Hashes
+
+Only real Stellar Testnet hashes are documented.
+
+| Action | Transaction Hash | Stellar Expert |
+| --- | --- | --- |
+| Create Bounty | `b1d1ae0ac1b6f783e34a6042f2ec776e0dcc54083860352e9fa61970de9c98a1` | [Open](https://stellar.expert/explorer/testnet/tx/b1d1ae0ac1b6f783e34a6042f2ec776e0dcc54083860352e9fa61970de9c98a1) |
+| Submit Report | `149b64983d26d92da9f9cc3c6c94056e6ff5a2e7341c761adde3bd5cf9b1de4e` | [Open](https://stellar.expert/explorer/testnet/tx/149b64983d26d92da9f9cc3c6c94056e6ff5a2e7341c761adde3bd5cf9b1de4e) |
+| Approve Report | `0a56ce22f0e7231604d9b5d857f7626920929086fb48ea928582375a1f656b6c` | [Open](https://stellar.expert/explorer/testnet/tx/0a56ce22f0e7231604d9b5d857f7626920929086fb48ea928582375a1f656b6c) |
+| Claim Reward | `57cdfcac4ad8c1438e3a7cb5ef78a9a04862a3351a8cd9ef6131721ce7ee0173` | [Open](https://stellar.expert/explorer/testnet/tx/57cdfcac4ad8c1438e3a7cb5ef78a9a04862a3351a8cd9ef6131721ce7ee0173) |
+| Refund Expired Bounty | `ccd55b08eb11c14b6eadb0c99527a8b7749f487fc32b9f9f43958114a4046e8b` | [Open](https://stellar.expert/explorer/testnet/tx/ccd55b08eb11c14b6eadb0c99527a8b7749f487fc32b9f9f43958114a4046e8b) |
+
+### User Onboarding Flow
+
+The dashboard shows an onboarding checklist until the user completes the Level 4 MVP flow:
+
+- Create account.
+- Connect Freighter wallet.
+- Create first bounty or submit first report.
+- View a transaction on Stellar Expert.
+- Submit product feedback.
+
+Backend support:
+
+- `GET /onboarding/me`
+- `PATCH /onboarding/me`
+- `POST /onboarding/complete`
+
+### Feedback Summary
+
+Users can submit product feedback from the Feedback page with rating, role, and comment. Feedback summary is available in the app and through the backend API.
+
+- `POST /feedback`
+- `GET /feedback/me`
+- `GET /feedback/summary`
+
+Current real-user feedback summary:
+
+TODO: Add feedback summary after real users test
+
+### Proof of 10+ User Wallet Interactions
+
+BugChain records wallet interaction proofs only after real wallet or transaction actions succeed. No fake users, fake transaction hashes, or fake wallet proofs are included.
+
+Tracked actions:
+
+- `WALLET_CONNECTED`
+- `BOUNTY_CREATED`
+- `REPORT_SUBMITTED`
+- `REPORT_APPROVED`
+- `REWARD_CLAIMED`
+- `BOUNTY_REFUNDED`
+
+Proof dashboard:
+
+- Frontend: `/level4/user-proofs`
+- Backend: `GET /user-proofs`
+- CSV export: `GET /user-proofs/export`
+
+How to collect the required 10+ real users:
+
+1. Deploy the frontend and backend using the production environment variables below.
+2. Invite at least 10 real testers to register their own accounts.
+3. Ask each tester to connect Freighter on Stellar Testnet.
+4. Ask testers to complete at least one real wallet action such as creating a bounty, submitting a report, approving a report, claiming a reward, or refunding an expired bounty.
+5. Verify the records in `/level4/user-proofs`.
+6. Export the CSV and add a screenshot to this README.
+
+Current proof screenshot:
+
+TODO: Add 10-user proof screenshot
+
+### Analytics Setup
+
+Frontend product analytics supports PostHog and safely no-ops when keys are missing.
+
+```env
+VITE_POSTHOG_KEY=
+VITE_POSTHOG_HOST=https://app.posthog.com
+```
+
+Tracked frontend events:
+
+- `user_registered`
+- `user_logged_in`
+- `wallet_connected`
+- `bounty_created`
+- `report_submitted`
+- `report_approved`
+- `reward_claimed`
+- `feedback_submitted`
+- `onboarding_completed`
+
+MVP analytics dashboard:
+
+- Frontend: `/level4/analytics`
+- Backend: `GET /analytics/overview`
+- Backend: `GET /analytics/funnel`
+- Backend: `GET /analytics/wallet-interactions`
+
+TODO: Add analytics screenshot
+
+### Monitoring Setup
+
+Frontend and backend Sentry are optional. Missing DSNs log a warning and do not crash the app.
+
+Frontend:
+
+```env
+VITE_SENTRY_DSN=
+```
+
+Backend:
+
+```env
+SENTRY_DSN=
+```
+
+Captured failure classes:
+
+- Frontend runtime errors.
+- API errors.
+- Transaction errors.
+- Backend unhandled exceptions and unhandled promise rejections.
+
+### Mobile Responsive Screenshots
+
+Target widths for validation: 375px, 390px, and 430px.
+
+TODO: Add screenshot
+
+### CI/CD Pipeline
+
+GitHub Actions workflows:
+
+- `.github/workflows/frontend-ci.yml`
+- `.github/workflows/backend-ci.yml`
+- `.github/workflows/contract-ci.yml`
+
+TODO: Add CI/CD screenshot
+
+### Test Output
+
+TODO: Add test output screenshot
+
+### Demo Video
+
+TODO: Add demo video
+
+### Production Environment Setup
+
+Frontend is Vercel-ready. Backend is Railway/Render-ready. PostgreSQL can be hosted on Supabase, Neon, Railway, or Render.
+
+Frontend environment:
+
+```env
+VITE_API_URL=
+VITE_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+VITE_STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+VITE_CONTRACT_ID=CBRSQQ3WTR4S32JKUMO2E3MA6P3EX5IH6YC6FR4HWIZFC72TBRXBNSCS
+VITE_POSTHOG_KEY=
+VITE_POSTHOG_HOST=https://app.posthog.com
+VITE_SENTRY_DSN=
+```
+
+Backend environment:
+
+```env
+DATABASE_URL=
+JWT_SECRET=
+JWT_REFRESH_SECRET=
+FRONTEND_URL=
+SENTRY_DSN=
+```
+
+Use `frontend/.env.example` and `backend/.env.example` as the canonical variable lists.
+
+### Submission Checklist
+
+- [x] Production-ready MVP architecture.
+- [x] Stable frontend and Soroban interaction architecture preserved.
+- [x] Mobile responsive polish for Level 4 pages and navigation.
+- [x] Loading, empty, retry, toast, API error, and transaction error handling.
+- [x] Guided onboarding checklist.
+- [x] Feedback collection and summary endpoints.
+- [x] Wallet interaction proof tracking and CSV export.
+- [x] Analytics dashboard and optional PostHog integration.
+- [x] Optional Sentry monitoring integration.
+- [x] Deployment-ready environment examples.
+- [x] CI/CD workflows for frontend, backend, and contracts.
+- [x] Smart contract deployed on Stellar Testnet.
+- [x] Public README Level 4 section.
+- [x] Repository has at least 15 meaningful commits.
+- [ ] Live demo link added.
+- [ ] Demo video added.
+- [ ] Screenshots added.
+- [ ] CI/CD screenshot added.
+- [ ] Test output screenshot added.
+- [ ] 10+ real users onboarded.
+- [ ] 10+ real wallet interaction proof screenshot added.
+- [ ] Real feedback summary added after user testing.

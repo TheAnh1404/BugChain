@@ -20,6 +20,33 @@ cp .env.example .env
 
 Update `.env` with your PostgreSQL connection string and a strong `JWT_SECRET`.
 
+## Real Email Delivery
+
+Local development defaults to `EMAIL_PROVIDER="console"`, which keeps verification and reset links in terminal logs and `/auth/dev-emails`.
+
+To send to the user's real email inbox, configure SMTP in `backend/.env` and restart the backend:
+
+```env
+EMAIL_PROVIDER="smtp"
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER="your-gmail-address@gmail.com"
+SMTP_PASS="your-16-character-google-app-password"
+SMTP_FROM="your-gmail-address@gmail.com"
+FRONTEND_URL="http://localhost:5173"
+```
+
+For Gmail, `SMTP_PASS` must be an App Password, not your normal Google password. The verification email is sent to the email address entered during registration.
+
+For local demos without email delivery, you can return the password reset link directly in the app:
+
+```env
+DEV_INLINE_PASSWORD_RESET_LINK=true
+```
+
+This mode only works outside production and should not be enabled for deployed environments.
+
 ## Database
 
 ```bash
@@ -63,4 +90,4 @@ Use `Authorization: Bearer <token>` for authenticated routes.
 
 ## Wallet Linking
 
-Wallet signature verification is intentionally stubbed in `wallets.service.ts`. Replace the TODO implementation with Stellar/Freighter verification before production use.
+Wallet linking uses Freighter message signing. `wallets.service.ts` verifies the nonce-bound message with Stellar SDK `Keypair.fromPublicKey(...).verify(...)` before marking a wallet as verified.

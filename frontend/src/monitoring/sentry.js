@@ -1,9 +1,14 @@
 import * as Sentry from '@sentry/react';
 
 const dsn = import.meta.env.VITE_SENTRY_DSN;
+let warnedMissingDsn = false;
 
 export function initSentry() {
   if (!dsn) {
+    if (!warnedMissingDsn) {
+      console.warn('Sentry frontend DSN is not configured; runtime error monitoring is disabled.');
+      warnedMissingDsn = true;
+    }
     return;
   }
 

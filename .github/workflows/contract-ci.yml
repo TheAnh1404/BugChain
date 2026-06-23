@@ -1,0 +1,27 @@
+name: Contract CI
+
+on:
+  push:
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/contract-ci.yml'
+  pull_request:
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/contract-ci.yml'
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test contracts
+        run: cargo test

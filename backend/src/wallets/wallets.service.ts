@@ -8,13 +8,18 @@ import {
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import { Keypair } from '@stellar/stellar-sdk';
+import { WalletInteractionAction } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserProofsService } from '../user-proofs/user-proofs.service';
 import { WalletLinkDto } from './dto/wallet-link.dto';
 import { WalletNonceDto } from './dto/wallet-nonce.dto';
 
 @Injectable()
 export class WalletsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly userProofsService: UserProofsService,
+  ) {}
 
   async createNonce(userId: string, dto: WalletNonceDto) {
     const walletAddress = this.normalizeWalletAddress(dto.walletAddress);
@@ -106,6 +111,12 @@ export class WalletsService {
           isPrimary: wallet.isPrimary || !primaryWallet,
         },
       });
+    });
+
+    await this.userProofsService.record({
+      userId,
+      walletAddress,
+      action: WalletInteractionAction.WALLET_CONNECTED,
     });
 
     return linkedWallet;

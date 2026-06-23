@@ -4,6 +4,7 @@ import { EventsModule } from '../events/events.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ReputationModule } from '../reputation/reputation.module';
 import { SecurityModule } from '../security/security.module';
+import { UserProofsModule } from '../user-proofs/user-proofs.module';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 
@@ -14,6 +15,7 @@ import { ReportsService } from './reports.service';
     NotificationsModule,
     ReputationModule,
     SecurityModule,
+    UserProofsModule,
   ],
   controllers: [ReportsController],
   providers: [ReportsService],

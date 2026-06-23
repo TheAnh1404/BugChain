@@ -3,11 +3,13 @@ import {
   Controller,
   Delete,
   Get,
+  NotFoundException,
   Param,
   Post,
   Query,
   Req,
   UseGuards,
+  Header,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { UserRole } from '@prisma/client';
@@ -17,6 +19,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { AuthService } from './auth.service';
+import { EmailService } from '../email/email.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -24,7 +27,109 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly emailService: EmailService,
+  ) {}
+
+  @Get('dev-emails')
+  @Header('Content-Type', 'text/html')
+  async getDevEmails() {
+    if (process.env.NODE_ENV === 'production') {
+      throw new NotFoundException('Not found');
+    }
+
+    const emails = this.emailService.getSentEmails();
+    const emailListHtml = emails.length === 0
+      ? `<div style="text-align: center; color: rgba(255,255,255,0.4); padding: 40px; border: 1px dashed rgba(255,255,255,0.1); border-radius: 8px;">
+          No emails sent yet. Try registering a new account or requesting a password reset!
+         </div>`
+      : emails.map((m, index) => {
+          return `
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px; margin-bottom: 12px;">
+                <div>
+                  <span style="font-weight: 600; color: #d2bbff; font-size: 14px;">To:</span>
+                  <span style="color: #e8dfee; font-size: 14px; font-family: monospace;">${m.to}</span>
+                </div>
+                <div style="font-size: 12px; color: rgba(255,255,255,0.4);">
+                  ${new Date(m.sentAt).toLocaleTimeString()}
+                </div>
+              </div>
+              <div style="font-size: 16px; font-weight: bold; margin-bottom: 16px; color: #ffffff;">
+                ${m.subject}
+              </div>
+              <div style="background: #110d18; border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; padding: 16px; overflow-x: auto;">
+                ${m.html}
+              </div>
+            </div>
+          `;
+        }).reverse().join('');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>BugChain - Local Mail Inbox</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body {
+              background-color: #0A0A0A;
+              color: #e8dfee;
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+              margin: 0;
+              padding: 24px;
+              display: flex;
+              justify-content: center;
+            }
+            .container {
+              width: 100%;
+              max-width: 800px;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 32px;
+              border-bottom: 1px solid rgba(255,255,255,0.1);
+              padding-bottom: 16px;
+            }
+            .title {
+              font-size: 24px;
+              font-weight: 700;
+              color: #ffffff;
+              background: linear-gradient(135deg, #d2bbff 0%, #7c3aed 100%);
+              -webkit-background-clip: text;
+              -webkit-text-fill-color: transparent;
+            }
+            .refresh-btn {
+              background: #7c3aed;
+              color: #ffffff;
+              border: none;
+              padding: 10px 20px;
+              border-radius: 8px;
+              font-weight: bold;
+              cursor: pointer;
+              transition: all 0.2s ease;
+            }
+            .refresh-btn:hover {
+              background: #6d28d9;
+              transform: translateY(-1px);
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <div class="title">BugChain Dev Mailbox</div>
+              <button class="refresh-btn" onclick="window.location.reload()">Refresh</button>
+            </div>
+            ${emailListHtml}
+          </div>
+        </body>
+      </html>
+    `;
+  }
 
   @Post('register')
   async register(@Body() dto: RegisterDto) {

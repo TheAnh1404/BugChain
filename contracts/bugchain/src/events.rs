@@ -48,3 +48,24 @@ pub fn bounty_refunded(env: &Env, bounty_id: u64, owner: Address, amount: i128) 
         (owner, amount),
     );
 }
+
+pub fn funds_deposited(env: &Env, bounty_id: u64, owner: Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "funds_deposited"), bounty_id),
+        (owner, amount),
+    );
+}
+
+pub fn dispute_escalated(env: &Env, bounty_id: u64, report_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_escalated"), bounty_id, report_id),
+        (),
+    );
+}
+
+pub fn dispute_resolved(env: &Env, bounty_id: u64, report_id: u64, payout_hunter: bool) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_resolved"), bounty_id, report_id),
+        payout_hunter,
+    );
+}

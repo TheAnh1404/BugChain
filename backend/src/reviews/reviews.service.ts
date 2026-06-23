@@ -16,6 +16,7 @@ import {
   TransactionStatus,
   TransactionType,
   UserRole,
+  WalletInteractionAction,
 } from '@prisma/client';
 import { AuditLogsService } from '../audit/audit-logs.service';
 import { AuthUser } from '../common/types/auth-user.type';
@@ -23,6 +24,8 @@ import { EventsService } from '../events/events.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReputationService } from '../reputation/reputation.service';
+import { StellarValidationService } from '../security/stellar-validation.service';
+import { UserProofsService } from '../user-proofs/user-proofs.service';
 import { AssignReviewerDto } from './dto/assign-reviewer.dto';
 
 @Injectable()
@@ -33,6 +36,8 @@ export class ReviewsService {
     private readonly eventsService: EventsService,
     private readonly notificationsService: NotificationsService,
     private readonly reputationService: ReputationService,
+    private readonly stellarValidationService: StellarValidationService,
+    private readonly userProofsService: UserProofsService,
   ) {}
 
   async assignReviewer(reportId: string, owner: AuthUser, dto: AssignReviewerDto) {
@@ -157,6 +162,13 @@ export class ReviewsService {
       decision === ReviewDecision.APPROVE
         ? ReportStatus.APPROVED
         : ReportStatus.REJECTED;
+
+    if (txHash) {
+      await this.stellarValidationService.validateReportReviewTx({
+        txHash,
+        approved: decision === ReviewDecision.APPROVE,
+      });
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
       const reviewerSlot = assignedReviewer?.reviewerOrder ?? 1;
@@ -287,6 +299,13 @@ export class ReviewsService {
         onchainReportId: report.onchainReportId || undefined,
         transactionType: TransactionType.APPROVE_REPORT,
       });
+      if (txHash) {
+        await this.userProofsService.record({
+          userId: reviewer.id,
+          action: WalletInteractionAction.REPORT_APPROVED,
+          txHash,
+        });
+      }
     } else {
       await this.reputationService.recordRejectedReport(report.hunterId);
       this.eventsService.emit('report_rejected', {

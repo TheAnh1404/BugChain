@@ -13,6 +13,7 @@ import {
   TransactionStatus,
   TransactionType,
   UserRole,
+  WalletInteractionAction,
 } from '@prisma/client';
 import { AuditLogsService } from '../audit/audit-logs.service';
 import { AuthUser } from '../common/types/auth-user.type';
@@ -20,6 +21,8 @@ import { EventsService } from '../events/events.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { StellarValidationService } from '../security/stellar-validation.service';
+import { UserProofsService } from '../user-proofs/user-proofs.service';
 import { CreateBountyDto } from './dto/create-bounty.dto';
 import { QueryBountyDto } from './dto/query-bounty.dto';
 import { UpdateBountyDto } from './dto/update-bounty.dto';
@@ -29,6 +32,7 @@ const ownerSelect = {
   id: true,
   username: true,
   avatarUrl: true,
+  rsaPublicKey: true,
 } as const;
 
 const bountyInclude = {
@@ -50,6 +54,8 @@ export class BountiesService {
     private readonly eventsService: EventsService,
     private readonly notificationsService: NotificationsService,
     private readonly organizationsService: OrganizationsService,
+    private readonly stellarValidationService: StellarValidationService,
+    private readonly userProofsService: UserProofsService,
   ) {}
 
   async create(ownerId: string, dto: CreateBountyDto, owner?: AuthUser) {
@@ -207,6 +213,7 @@ export class BountiesService {
 
   async updateOnChain(id: string, user: AuthUser, dto: UpdateBountyOnChainDto) {
     const bounty = await this.getBountyForOwner(id, user);
+    await this.stellarValidationService.validateBountyCreationTx({ txHash: dto.txHash });
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedBounty = await tx.bounty.update({
@@ -247,6 +254,13 @@ export class BountiesService {
       transactionType: TransactionType.CREATE_BOUNTY,
     });
 
+    await this.userProofsService.record({
+      userId: user.id,
+      action: WalletInteractionAction.BOUNTY_CREATED,
+      txHash: dto.txHash,
+      stellarExplorerUrl: updated.stellarExplorerUrl,
+    });
+
     return this.serializeBounty(updated);
   }
 
@@ -262,6 +276,7 @@ export class BountiesService {
     }
 
     const txHash = dto.txHash.toLowerCase();
+    await this.stellarValidationService.validateRefundTx({ txHash });
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedBounty = await tx.bounty.update({
@@ -304,6 +319,12 @@ export class BountiesService {
       txHash,
       onchainBountyId: updated.onchainBountyId || undefined,
       transactionType: TransactionType.REFUND,
+    });
+
+    await this.userProofsService.record({
+      userId: user.id,
+      action: WalletInteractionAction.BOUNTY_REFUNDED,
+      txHash,
     });
 
     return this.serializeBounty(updated);

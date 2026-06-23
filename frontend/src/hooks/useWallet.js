@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { linkFreighterWallet } from '../lib/freighter';
+import { trackEvent } from '../lib/analytics';
 import { walletService } from '../services/walletService';
 import { shortenAddress } from '../utils/shortenAddress';
+
+const WALLETS_UPDATED_EVENT = 'bugchain-wallets-updated';
+
+function notifyWalletsUpdated() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(WALLETS_UPDATED_EVENT));
+  }
+}
 
 export function useWallet() {
   const { isAuthenticated, refreshMe } = useAuth();
@@ -58,6 +67,24 @@ export function useWallet() {
     };
   }, [isAuthenticated]);
 
+  useEffect(() => {
+    if (!isAuthenticated || typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const handleWalletsUpdated = () => {
+      loadWallets().catch((err) => {
+        setError(err.message);
+      });
+    };
+
+    window.addEventListener(WALLETS_UPDATED_EVENT, handleWalletsUpdated);
+
+    return () => {
+      window.removeEventListener(WALLETS_UPDATED_EVENT, handleWalletsUpdated);
+    };
+  }, [isAuthenticated, loadWallets]);
+
   const connectWallet = useCallback(async () => {
     if (!isAuthenticated) {
       const authError = new Error('Please login first.');
@@ -72,6 +99,8 @@ export function useWallet() {
       const linkedWallet = await linkFreighterWallet();
       await loadWallets();
       await refreshMe();
+      notifyWalletsUpdated();
+      trackEvent('wallet_connected', { walletAddress: linkedWallet.walletAddress });
       return linkedWallet;
     } catch (err) {
       setError(err.message);
@@ -89,6 +118,7 @@ export function useWallet() {
       await walletService.remove(walletId);
       await loadWallets();
       await refreshMe();
+      notifyWalletsUpdated();
     },
     [loadWallets, refreshMe],
   );

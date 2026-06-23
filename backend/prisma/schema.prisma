@@ -115,6 +115,15 @@ enum SecurityLogAction {
   SESSION_REVOKED
 }
 
+enum WalletInteractionAction {
+  WALLET_CONNECTED
+  BOUNTY_CREATED
+  REPORT_SUBMITTED
+  REPORT_APPROVED
+  REWARD_CLAIMED
+  BOUNTY_REFUNDED
+}
+
 model User {
   id                      String               @id @default(uuid()) @db.Uuid
   email                   String               @unique
@@ -129,7 +138,12 @@ model User {
   lockedUntil             DateTime?
   lastLoginAt             DateTime?
   lastPasswordChangedAt   DateTime?
+  onboardingCompleted     Boolean              @default(false)
+  firstWalletConnectedAt  DateTime?
+  firstBountyCreatedAt    DateTime?
+  firstReportSubmittedAt  DateTime?
   avatarUrl               String?
+  rsaPublicKey            String?              @db.Text
   role                    UserRole             @default(HUNTER)
   createdAt               DateTime             @default(now())
   updatedAt               DateTime             @updatedAt
@@ -147,9 +161,56 @@ model User {
   reviewAssignments       ReviewAssignment[]   @relation("ReviewAssignmentReviewer")
   sessions                UserSession[]
   securityLogs            SecurityLog[]
+  feedback                Feedback[]
+  walletInteractions      UserWalletInteraction[]
+  analyticsEvents         AnalyticsEvent[]
 
   @@index([emailVerificationToken])
   @@index([passwordResetToken])
+}
+
+model Feedback {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  rating    Int
+  role      String
+  comment   String   @db.Text
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([rating])
+  @@index([createdAt])
+}
+
+model UserWalletInteraction {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  userId             String                  @db.Uuid
+  walletAddress      String
+  action             WalletInteractionAction
+  txHash             String?
+  stellarExplorerUrl String?
+  createdAt          DateTime                @default(now())
+  user               User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([walletAddress])
+  @@index([action])
+  @@index([txHash])
+  @@index([createdAt])
+}
+
+model AnalyticsEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @db.Uuid
+  eventName  String
+  properties Json?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([eventName])
+  @@index([createdAt])
 }
 
 model UserSession {
@@ -245,6 +306,8 @@ model Report {
   impact             String
   recommendation     String
   encryptedContent   String?       @map("encrypted_content") @db.Text
+  encryptedAesKey     String?       @map("encrypted_aes_key") @db.Text
+  encryptionScheme    String?       @default("SERVER_AES_GCM")
   iv                 String?
   authTag            String?       @map("auth_tag")
   reportHash         String?
@@ -418,4 +481,10 @@ model Project {
 
   @@unique([organizationId, slug])
   @@index([organizationId])
+}
+
+model SyncCheckpoint {
+  serviceName         String   @id
+  lastProcessedLedger Int
+  updatedAt           DateTime @updatedAt
 }

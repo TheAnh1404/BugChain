@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useWallet } from '../hooks/useWallet';
+import { generateOwnerEncryptionKeyPair, hasStoredOwnerPrivateKey } from '../lib/clientCrypto';
 import { shortenAddress } from '../utils/shortenAddress';
 
 export default function ProfileSettings() {
@@ -17,6 +18,8 @@ export default function ProfileSettings() {
   
   const {
     wallets,
+    wallet,
+    shortenedAddress,
     isConnecting,
     isWrongNetwork,
     error: walletError,
@@ -38,6 +41,8 @@ export default function ProfileSettings() {
 
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [encryptionPassphrase, setEncryptionPassphrase] = useState('');
+  const [hasLocalPrivateKey, setHasLocalPrivateKey] = useState(() => hasStoredOwnerPrivateKey());
 
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -136,6 +141,24 @@ export default function ProfileSettings() {
         newPassword: '',
         confirmNewPassword: '',
       });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleGenerateEncryptionKeys = async () => {
+    setIsSaving(true);
+    setError('');
+    setStatus('');
+
+    try {
+      const { publicKey } = await generateOwnerEncryptionKeyPair(encryptionPassphrase);
+      await updateProfile({ rsaPublicKey: publicKey });
+      setHasLocalPrivateKey(true);
+      setEncryptionPassphrase('');
+      setStatus('Report encryption key published. Keep this browser and passphrase for decrypting future reports.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -309,6 +332,8 @@ export default function ProfileSettings() {
                   ? 'Connecting...'
                   : isWrongNetwork
                     ? 'Switch to Testnet'
+                    : wallet
+                      ? `Connected: ${shortenedAddress || 'Wallet'}`
                     : 'Connect Freighter'}
               </button>
             </div>
@@ -356,7 +381,7 @@ export default function ProfileSettings() {
       )}
 
       {activeTab === 'security' && (
-        <div className="max-w-xl animate-fade-in">
+        <div className="max-w-xl animate-fade-in space-y-6">
           <form onSubmit={handleChangePassword} className="glass rounded-2xl p-6 space-y-5">
             <h2 className="text-xl font-bold text-[#e8dfee]">Change Password</h2>
             <p className="text-sm text-[#ccc3d8]">
@@ -415,6 +440,47 @@ export default function ProfileSettings() {
               {isSaving ? 'Updating...' : 'Update Password'}
             </button>
           </form>
+
+          <section className="glass rounded-2xl p-6 space-y-5">
+            <div>
+              <h2 className="text-xl font-bold text-[#e8dfee]">Report E2EE Key</h2>
+              <p className="mt-2 text-sm text-[#ccc3d8]">
+                Generate an RSA-OAEP key pair so hunters can encrypt report details for this account before sending them to BugChain API.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-[#4a4455]/40 bg-[#100d16] p-4 text-sm text-[#ccc3d8]">
+              <p>
+                Public key: {user?.rsaPublicKey ? 'Published' : 'Not published'}
+              </p>
+              <p className="mt-1">
+                Local private key: {hasLocalPrivateKey ? 'Stored in this browser' : 'Not found in this browser'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-mono uppercase tracking-widest text-[#ccc3d8]">
+                Private Key Passphrase
+              </label>
+              <input
+                value={encryptionPassphrase}
+                onChange={(event) => setEncryptionPassphrase(event.target.value)}
+                className="input-dark w-full rounded-xl px-4 py-3 text-sm"
+                type="password"
+                minLength={8}
+                placeholder="Protects the private key stored in this browser"
+              />
+            </div>
+
+            <button
+              disabled={isSaving || encryptionPassphrase.length < 8}
+              onClick={handleGenerateEncryptionKeys}
+              className="rounded-xl bg-[#7c3aed] px-6 py-3 font-bold text-[#ede0ff] disabled:opacity-60 transition-all hover:brightness-110"
+              type="button"
+            >
+              {user?.rsaPublicKey ? 'Rotate E2EE Key' : 'Generate E2EE Key'}
+            </button>
+          </section>
         </div>
       )}
 

@@ -5,6 +5,8 @@ import { bountyService } from '../services/bountyService';
 import { reportService } from '../services/reportService';
 import { reviewService } from '../services/reviewService';
 import { connectFreighterTestnet } from '../lib/freighter';
+import { trackEvent } from '../lib/analytics';
+import { normalizeTransactionError } from '../lib/errors';
 import { approveReportOnChain, rejectReportOnChain, refundExpiredBountyOnChain } from '../lib/stellar';
 import { transactionService } from '../services/transactionService';
 
@@ -179,13 +181,14 @@ export default function BountyDetails({ bountyId, onBack, onSubmitReport, onDele
         }
       } catch (txError) {
         await transactionService.fail(pendingTransaction.id).catch(() => {});
-        throw txError;
+        throw new Error(normalizeTransactionError(txError).message, { cause: txError });
       }
 
       const txHash = result.txHash;
       if (decision === 'approve') {
         setStatus('Syncing approval to BugChain API...');
         await reviewService.approve(reportId, comment, txHash, pendingTransaction.id);
+        trackEvent('report_approved', { reportId, txHash });
         setStatus('Report approved successfully on-chain!');
       } else {
         setStatus('Syncing rejection to BugChain API...');
@@ -232,11 +235,12 @@ export default function BountyDetails({ bountyId, onBack, onSubmitReport, onDele
         });
       } catch (txError) {
         await transactionService.fail(pendingTransaction.id).catch(() => {});
-        throw txError;
+        throw new Error(normalizeTransactionError(txError).message, { cause: txError });
       }
 
       setStatus('Syncing refund transaction to BugChain API...');
       await bountyService.refundBounty(bounty.id, result.txHash, pendingTransaction.id);
+      trackEvent('bounty_refunded', { bountyId: bounty.id, txHash: result.txHash });
       setStatus('Bounty escrow refunded successfully!');
 
       await refreshBountyDetails({ quiet: true });

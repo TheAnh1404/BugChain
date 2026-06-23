@@ -14,4 +14,9 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(500)
   avatarUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(12000)
+  rsaPublicKey?: string;
 }

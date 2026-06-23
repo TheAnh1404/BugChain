@@ -1,3 +1,5 @@
+import { normalizeApiError, notifyToast } from '../lib/errors';
+
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 const TOKEN_KEY = 'bugchain_access_token';
 const REFRESH_TOKEN_KEY = 'bugchain_refresh_token';
@@ -27,12 +29,19 @@ export function clearStoredToken() {
 let isRefreshing = false;
 let refreshSubscribers = [];
 
-function subscribeTokenRefresh(cb) {
-  refreshSubscribers.push(cb);
+function subscribeTokenRefresh() {
+  return new Promise((resolve, reject) => {
+    refreshSubscribers.push({ resolve, reject });
+  });
 }
 
 function onRefreshed(token) {
-  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers.forEach((subscriber) => subscriber.resolve(token));
+  refreshSubscribers = [];
+}
+
+function onRefreshFailed(error) {
+  refreshSubscribers.forEach((subscriber) => subscriber.reject(error));
   refreshSubscribers = [];
 }
 
@@ -60,6 +69,8 @@ export async function apiRequest(path, options = {}) {
   if (response.status === 401 && options.auth !== false) {
     const refreshToken = getStoredRefreshToken();
     if (refreshToken) {
+      let nextAccessToken;
+
       if (!isRefreshing) {
         isRefreshing = true;
         try {
@@ -73,44 +84,45 @@ export async function apiRequest(path, options = {}) {
             const resData = await refreshResponse.json();
             const data = resData.data ?? resData;
             setStoredTokens(data.accessToken, data.refreshToken);
+            nextAccessToken = data.accessToken;
             isRefreshing = false;
             onRefreshed(data.accessToken);
           } else {
-            isRefreshing = false;
-            clearStoredToken();
-            window.dispatchEvent(new Event('auth-logout'));
             throw new Error('Session expired');
           }
         } catch (err) {
           isRefreshing = false;
           clearStoredToken();
           window.dispatchEvent(new Event('auth-logout'));
+          onRefreshFailed(err);
           throw err;
         }
+      } else {
+        nextAccessToken = await subscribeTokenRefresh();
       }
 
-      const retryPromise = new Promise((resolve) => {
-        subscribeTokenRefresh((newToken) => {
-          headers.set('Authorization', `Bearer ${newToken}`);
-          resolve(
-            fetch(`${API_BASE_URL}${path}`, {
-              ...options,
-              headers,
-              body:
-                options.body !== undefined && typeof options.body !== 'string'
-                  ? JSON.stringify(options.body)
-                  : options.body,
-            })
-          );
-        });
+      headers.set('Authorization', `Bearer ${nextAccessToken}`);
+      response = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        headers,
+        body:
+          options.body !== undefined && typeof options.body !== 'string'
+            ? JSON.stringify(options.body)
+            : options.body,
       });
-
-      response = await retryPromise;
     }
   }
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  let payload = null;
+
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { message: text };
+    }
+  }
 
   if (!response.ok) {
     const message = Array.isArray(payload?.message)
@@ -119,6 +131,10 @@ export async function apiRequest(path, options = {}) {
     const error = new Error(message);
     error.status = response.status;
     error.payload = payload;
+    const normalized = normalizeApiError(error);
+    if (response.status !== 401 && !options.suppressToast) {
+      notifyToast({ type: 'error', message: normalized.message });
+    }
     throw error;
   }
 

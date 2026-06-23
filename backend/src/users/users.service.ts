@@ -7,6 +7,7 @@ const publicUserSelect = {
   email: true,
   username: true,
   avatarUrl: true,
+  rsaPublicKey: true,
   role: true,
   createdAt: true,
   updatedAt: true,
@@ -42,6 +43,14 @@ export class UsersService {
 
     if (dto.avatarUrl !== undefined) {
       data.avatarUrl = dto.avatarUrl.trim() || undefined;
+    }
+
+    if (dto.rsaPublicKey !== undefined) {
+      const rsaPublicKey = dto.rsaPublicKey.trim();
+      if (rsaPublicKey && !/^[A-Za-z0-9+/=]+$/.test(rsaPublicKey)) {
+        throw new BadRequestException('RSA public key must be base64-encoded SPKI');
+      }
+      data.rsaPublicKey = rsaPublicKey || undefined;
     }
 
     return this.prisma.user.update({

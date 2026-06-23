@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { authService } from '../services/authService';
 import { userService } from '../services/userService';
+import { trackEvent } from '../lib/analytics';
 import {
   clearStoredToken,
   getStoredToken,
@@ -62,6 +63,7 @@ export function AuthProvider({ children }) {
 
   const register = async (payload) => {
     const result = await authService.register(payload);
+    trackEvent('user_registered');
     setAuthError('');
     return result; // Success message, no token/login
   };
@@ -70,6 +72,7 @@ export function AuthProvider({ children }) {
     const result = await authService.login(payload);
     setStoredTokens(result.accessToken, result.refreshToken);
     setUser(result.user);
+    trackEvent('user_logged_in', { userId: result.user?.id });
     setAuthError('');
     return result.user;
   };

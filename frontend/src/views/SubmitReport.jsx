@@ -3,6 +3,9 @@ import { bountyService } from '../services/bountyService';
 import { reportService } from '../services/reportService';
 import { transactionService } from '../services/transactionService';
 import { connectFreighterTestnet } from '../lib/freighter';
+import { trackEvent } from '../lib/analytics';
+import { normalizeTransactionError } from '../lib/errors';
+import { encryptReportForOwner } from '../lib/clientCrypto';
 import { hashReportMetadata, submitReportOnChain } from '../lib/stellar';
 
 const initialForm = {
@@ -104,6 +107,10 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
       });
       setIsSyncFailed(false);
       setSubmitSuccess(true);
+      trackEvent('report_submitted', {
+        reportId: createdReport.id,
+        txHash: chainResult.txHash,
+      });
       setProgressMessage('');
     } catch (err) {
       setError(`Sync retry failed: ${err.message}`);
@@ -152,13 +159,20 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
     let savedReport;
     try {
       setProgressMessage('Saving report metadata off-chain as draft...');
-      savedReport = await reportService.submit(form.bountyId, {
-        title: form.title,
-        severity: form.severity,
+      const sensitiveReportData = {
         description: form.description,
         stepsToReproduce: form.stepsToReproduce,
         impact: form.impact,
         recommendation: form.recommendation,
+      };
+      const encryptedPayload = targetBounty.owner?.rsaPublicKey
+        ? await encryptReportForOwner(sensitiveReportData, targetBounty.owner.rsaPublicKey)
+        : null;
+
+      savedReport = await reportService.submit(form.bountyId, {
+        title: form.title,
+        severity: form.severity,
+        ...(encryptedPayload || sensitiveReportData),
       });
       setCreatedReport(savedReport);
     } catch (err) {
@@ -214,7 +228,7 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
       });
     } catch (err) {
       await transactionService.fail(pendingTransaction.id).catch(() => {});
-      setError(`Soroban transaction failed: ${err.message}`);
+      setError(`Soroban transaction failed: ${normalizeTransactionError(err).message}`);
       setIsSubmitting(false);
       setProgressMessage('');
       return;
@@ -237,6 +251,10 @@ export default function SubmitReport({ selectedBountyId, setCurrentView }) {
         transactionId: pendingTransaction.id,
       });
       setSubmitSuccess(true);
+      trackEvent('report_submitted', {
+        reportId: savedReport.id,
+        txHash: fullChainResult.txHash,
+      });
       setProgressMessage('');
     } catch (err) {
       setIsSyncFailed(true);

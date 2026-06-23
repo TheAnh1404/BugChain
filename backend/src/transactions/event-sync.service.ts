@@ -7,6 +7,7 @@ import { EventsService } from '../events/events.service';
 @Injectable()
 export class EventSyncService implements OnModuleInit {
   private readonly logger = new Logger(EventSyncService.name);
+  private readonly serviceName = 'STELLAR_EVENT_SYNC';
   private readonly rpcUrl = process.env.VITE_STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org';
   private readonly contractId = process.env.VITE_CONTRACT_ID || 'CBRSQQ3WTR4S32JKUMO2E3MA6P3EX5IH6YC6FR4HWIZFC72TBRXBNSCS';
   private server: rpc.Server;
@@ -23,11 +24,26 @@ export class EventSyncService implements OnModuleInit {
     this.logger.log('Starting Stellar Event Sync Service...');
     
     try {
-      const latestLedgerRes = await this.server.getLatestLedger();
-      this.lastLedger = latestLedgerRes.sequence - 200; // Look back to handle offline periods
-      if (this.lastLedger < 0) this.lastLedger = 1;
+      const checkpoint = await this.prisma.syncCheckpoint.findUnique({
+        where: { serviceName: this.serviceName },
+      });
+
+      if (checkpoint) {
+        this.lastLedger = checkpoint.lastProcessedLedger;
+        this.logger.log(`Resuming event sync from checkpoint ledger ${this.lastLedger}`);
+      } else {
+        const latestLedgerRes = await this.server.getLatestLedger();
+        this.lastLedger = Math.max(1, latestLedgerRes.sequence - 10);
+        await this.prisma.syncCheckpoint.create({
+          data: {
+            serviceName: this.serviceName,
+            lastProcessedLedger: this.lastLedger,
+          },
+        });
+        this.logger.log(`Created event sync checkpoint at ledger ${this.lastLedger}`);
+      }
     } catch (err) {
-      this.logger.error('Failed to get latest ledger, defaulting to look back 200 sequences', err);
+      this.logger.error('Failed to initialize event sync checkpoint, defaulting to ledger 1', err);
       this.lastLedger = 1;
     }
 
@@ -44,10 +60,11 @@ export class EventSyncService implements OnModuleInit {
         return;
       }
 
-      this.logger.log(`Syncing events from ledger ${this.lastLedger} to ${currentLedger}`);
+      const startLedger = this.lastLedger + 1;
+      this.logger.log(`Syncing events from ledger ${startLedger} to ${currentLedger}`);
 
       const response = await this.server.getEvents({
-        startLedger: this.lastLedger,
+        startLedger,
         filters: [
           {
             type: 'contract',
@@ -57,11 +74,22 @@ export class EventSyncService implements OnModuleInit {
         limit: 100,
       });
 
-      if (response.events && response.events.length > 0) {
-        for (const event of response.events) {
-          await this.processEvent(event);
+      await this.prisma.$transaction(async (tx) => {
+        if (response.events && response.events.length > 0) {
+          for (const event of response.events) {
+            await this.processEvent(event, tx);
+          }
         }
-      }
+
+        await tx.syncCheckpoint.upsert({
+          where: { serviceName: this.serviceName },
+          create: {
+            serviceName: this.serviceName,
+            lastProcessedLedger: currentLedger,
+          },
+          update: { lastProcessedLedger: currentLedger },
+        });
+      });
 
       this.lastLedger = currentLedger;
     } catch (err) {
@@ -69,7 +97,7 @@ export class EventSyncService implements OnModuleInit {
     }
   }
 
-  private async processEvent(event: any) {
+  private async processEvent(event: any, tx: any = this.prisma) {
     try {
       const txHash = String(event.txHash || event.transactionHash || '').toLowerCase();
       const rawTopics = event.topic || [];
@@ -88,7 +116,7 @@ export class EventSyncService implements OnModuleInit {
         const onchainBountyId = String(topics[1]);
         
         // Find bounty by txHash
-        const bounty = await this.prisma.bounty.findFirst({
+        const bounty = await tx.bounty.findFirst({
           where: {
             OR: [
               { txHash },
@@ -99,7 +127,7 @@ export class EventSyncService implements OnModuleInit {
 
         if (bounty) {
           if (bounty.status !== BountyStatus.OPEN || bounty.txHash !== txHash) {
-            await this.prisma.bounty.update({
+            await tx.bounty.update({
               where: { id: bounty.id },
               data: {
                 status: BountyStatus.OPEN,
@@ -110,7 +138,7 @@ export class EventSyncService implements OnModuleInit {
             });
           }
 
-          const transaction = await this.ensureTransaction({
+          const transaction = await this.ensureTransaction(tx, {
             userId: bounty.ownerId,
             bountyId: bounty.id,
             txHash,
@@ -133,7 +161,7 @@ export class EventSyncService implements OnModuleInit {
         const onchainBountyId = String(value[0]);
 
         // Find report by txHash or reportHash
-        const report = await this.prisma.report.findFirst({
+        const report = await tx.report.findFirst({
           where: {
             OR: [
               { txHash },
@@ -144,7 +172,7 @@ export class EventSyncService implements OnModuleInit {
 
         if (report) {
           if (report.status !== ReportStatus.PENDING || report.txHash !== txHash) {
-            await this.prisma.report.update({
+            await tx.report.update({
               where: { id: report.id },
               data: {
                 status: ReportStatus.PENDING,
@@ -155,7 +183,7 @@ export class EventSyncService implements OnModuleInit {
             });
           }
 
-          const transaction = await this.ensureTransaction({
+          const transaction = await this.ensureTransaction(tx, {
             userId: report.hunterId,
             bountyId: report.bountyId,
             reportId: report.id,
@@ -178,14 +206,14 @@ export class EventSyncService implements OnModuleInit {
         const onchainBountyId = String(topics[1]);
         const onchainReportId = String(topics[2]);
 
-        const report = await this.prisma.report.findFirst({
+        const report = await tx.report.findFirst({
           where: { onchainReportId },
           include: { bounty: true },
         });
 
         if (report) {
           if (report.status !== ReportStatus.APPROVED && report.status !== ReportStatus.PAID) {
-            await this.prisma.report.update({
+            await tx.report.update({
               where: { id: report.id },
               data: {
                 status: ReportStatus.APPROVED,
@@ -195,13 +223,13 @@ export class EventSyncService implements OnModuleInit {
           }
 
           if (report.bounty.status !== BountyStatus.COMPLETED) {
-            await this.prisma.bounty.update({
+            await tx.bounty.update({
               where: { id: report.bountyId },
               data: { status: BountyStatus.COMPLETED },
             });
           }
 
-          const transaction = await this.ensureTransaction({
+          const transaction = await this.ensureTransaction(tx, {
             userId: report.bounty.ownerId,
             bountyId: report.bountyId,
             reportId: report.id,
@@ -225,14 +253,14 @@ export class EventSyncService implements OnModuleInit {
         const onchainBountyId = String(topics[1]);
         const onchainReportId = String(topics[2]);
 
-        const report = await this.prisma.report.findFirst({
+        const report = await tx.report.findFirst({
           where: { onchainReportId },
           include: { bounty: true },
         });
 
         if (report) {
           if (report.status !== ReportStatus.REJECTED) {
-            await this.prisma.report.update({
+            await tx.report.update({
               where: { id: report.id },
               data: {
                 status: ReportStatus.REJECTED,
@@ -241,7 +269,7 @@ export class EventSyncService implements OnModuleInit {
             });
           }
 
-          const transaction = await this.ensureTransaction({
+          const transaction = await this.ensureTransaction(tx, {
             userId: report.bounty.ownerId,
             bountyId: report.bountyId,
             reportId: report.id,
@@ -265,14 +293,14 @@ export class EventSyncService implements OnModuleInit {
         const onchainBountyId = String(topics[1]);
         const onchainReportId = String(topics[2]);
 
-        const report = await this.prisma.report.findFirst({
+        const report = await tx.report.findFirst({
           where: { onchainReportId },
           include: { bounty: true },
         });
 
         if (report) {
           if (report.status !== ReportStatus.PAID) {
-            await this.prisma.report.update({
+            await tx.report.update({
               where: { id: report.id },
               data: {
                 status: ReportStatus.PAID,
@@ -281,7 +309,7 @@ export class EventSyncService implements OnModuleInit {
             });
           }
 
-          const transaction = await this.ensureTransaction({
+          const transaction = await this.ensureTransaction(tx, {
             userId: report.hunterId,
             bountyId: report.bountyId,
             reportId: report.id,
@@ -304,13 +332,13 @@ export class EventSyncService implements OnModuleInit {
       else if (eventName === 'bounty_refunded') {
         const onchainBountyId = String(topics[1]);
 
-        const bounty = await this.prisma.bounty.findFirst({
+        const bounty = await tx.bounty.findFirst({
           where: { onchainBountyId },
         });
 
         if (bounty) {
           if (bounty.status !== BountyStatus.REFUNDED || bounty.refundTxHash !== txHash) {
-            await this.prisma.bounty.update({
+            await tx.bounty.update({
               where: { id: bounty.id },
               data: {
                 status: BountyStatus.REFUNDED,
@@ -319,7 +347,7 @@ export class EventSyncService implements OnModuleInit {
             });
           }
 
-          const transaction = await this.ensureTransaction({
+          const transaction = await this.ensureTransaction(tx, {
             userId: bounty.ownerId,
             bountyId: bounty.id,
             txHash,
@@ -341,14 +369,14 @@ export class EventSyncService implements OnModuleInit {
     }
   }
 
-  private async ensureTransaction(data: {
+  private async ensureTransaction(tx: any, data: {
     userId: string;
     bountyId?: string;
     reportId?: string;
     txHash: string;
     type: TransactionType;
   }) {
-    const existing = await this.prisma.transaction.findFirst({
+    const existing = await tx.transaction.findFirst({
       where: {
         type: data.type,
         OR: [
@@ -364,7 +392,7 @@ export class EventSyncService implements OnModuleInit {
     });
 
     if (existing) {
-      return this.prisma.transaction.update({
+      return tx.transaction.update({
         where: { id: existing.id },
         data: {
           txHash: data.txHash,
@@ -373,7 +401,7 @@ export class EventSyncService implements OnModuleInit {
       });
     }
 
-    const transaction = await this.prisma.transaction.create({
+    const transaction = await tx.transaction.create({
         data: {
           userId: data.userId,
           bountyId: data.bountyId || null,

@@ -48,6 +48,8 @@ impl BugChainContract {
             owner: owner.clone(),
             asset: asset.clone(),
             reward_amount,
+            total_escrowed: reward_amount,
+            remaining_balance: reward_amount,
             deadline,
             metadata_hash,
             status: BountyStatus::Open,
@@ -87,6 +89,7 @@ impl BugChainContract {
             hunter: hunter.clone(),
             report_hash,
             status: ReportStatus::Pending,
+            payout_amount: 0,
             submitted_at: env.ledger().timestamp(),
         };
 
@@ -126,6 +129,78 @@ impl BugChainContract {
         events::report_approved(&env, bounty_id, report_id, report.hunter);
     }
 
+    pub fn deposit_funds(env: Env, owner: Address, bounty_id: u64, amount: i128) {
+        storage::require_initialized(&env);
+        owner.require_auth();
+
+        if amount <= 0 {
+            panic_with_error!(&env, BugChainError::InvalidRewardAmount);
+        }
+
+        let mut bounty = storage::get_bounty(&env, bounty_id);
+        if owner != bounty.owner {
+            panic_with_error!(&env, BugChainError::Unauthorized);
+        }
+        if bounty.status != BountyStatus::Open {
+            panic_with_error!(&env, BugChainError::BountyNotOpen);
+        }
+
+        let contract_address = env.current_contract_address();
+        let token_client = token::Client::new(&env, &bounty.asset);
+        token_client.transfer(&owner, &contract_address, &amount);
+
+        bounty.total_escrowed += amount;
+        bounty.remaining_balance += amount;
+        storage::set_bounty(&env, &bounty);
+        events::funds_deposited(&env, bounty_id, owner, amount);
+    }
+
+    pub fn approve_report_with_payout(
+        env: Env,
+        owner: Address,
+        bounty_id: u64,
+        report_id: u64,
+        payout_amount: i128,
+    ) {
+        storage::require_initialized(&env);
+        owner.require_auth();
+
+        let mut bounty = storage::get_bounty(&env, bounty_id);
+        let mut report = storage::get_report(&env, report_id);
+
+        if owner != bounty.owner {
+            panic_with_error!(&env, BugChainError::Unauthorized);
+        }
+        if bounty.status != BountyStatus::Open {
+            panic_with_error!(&env, BugChainError::BountyNotOpen);
+        }
+        if report.bounty_id != bounty_id {
+            panic_with_error!(&env, BugChainError::ReportDoesNotBelongToBounty);
+        }
+        if report.status != ReportStatus::Pending {
+            panic_with_error!(&env, BugChainError::ReportNotPending);
+        }
+        if payout_amount <= 0 || payout_amount > bounty.remaining_balance {
+            panic_with_error!(&env, BugChainError::InvalidPayoutAmount);
+        }
+
+        let contract_address = env.current_contract_address();
+        let token_client = token::Client::new(&env, &bounty.asset);
+        token_client.transfer(&contract_address, &report.hunter, &payout_amount);
+
+        bounty.remaining_balance -= payout_amount;
+        if bounty.remaining_balance == 0 {
+            bounty.status = BountyStatus::Completed;
+        }
+
+        report.status = ReportStatus::Paid;
+        report.payout_amount = payout_amount;
+        storage::set_report(&env, &report);
+        storage::set_bounty(&env, &bounty);
+        events::report_approved(&env, bounty_id, report_id, report.hunter.clone());
+        events::reward_claimed(&env, bounty_id, report_id, report.hunter, payout_amount);
+    }
+
     pub fn reject_report(env: Env, owner: Address, bounty_id: u64, report_id: u64) {
         storage::require_initialized(&env);
         owner.require_auth();
@@ -148,11 +223,80 @@ impl BugChainContract {
         events::report_rejected(&env, bounty_id, report_id);
     }
 
+    pub fn escalate_dispute(env: Env, hunter: Address, report_id: u64) {
+        storage::require_initialized(&env);
+        hunter.require_auth();
+
+        let mut report = storage::get_report(&env, report_id);
+        if report.hunter != hunter {
+            panic_with_error!(&env, BugChainError::Unauthorized);
+        }
+        if report.status != ReportStatus::Rejected {
+            panic_with_error!(&env, BugChainError::CannotEscalateNonRejectedReport);
+        }
+
+        report.status = ReportStatus::Disputed;
+        storage::set_report(&env, &report);
+        events::dispute_escalated(&env, report.bounty_id, report_id);
+    }
+
+    pub fn resolve_dispute(
+        env: Env,
+        arbitrator: Address,
+        bounty_id: u64,
+        report_id: u64,
+        payout_hunter: bool,
+    ) {
+        storage::require_initialized(&env);
+        arbitrator.require_auth();
+
+        let admin = storage::get_admin(&env);
+        if arbitrator != admin {
+            panic_with_error!(&env, BugChainError::Unauthorized);
+        }
+
+        let mut bounty = storage::get_bounty(&env, bounty_id);
+        let mut report = storage::get_report(&env, report_id);
+        if report.bounty_id != bounty_id {
+            panic_with_error!(&env, BugChainError::ReportDoesNotBelongToBounty);
+        }
+        if report.status != ReportStatus::Disputed {
+            panic_with_error!(&env, BugChainError::ReportNotDisputed);
+        }
+
+        let contract_address = env.current_contract_address();
+        let token_client = token::Client::new(&env, &bounty.asset);
+        if payout_hunter {
+            let payout_amount = bounty.reward_amount.min(bounty.remaining_balance);
+            if payout_amount <= 0 {
+                panic_with_error!(&env, BugChainError::InvalidPayoutAmount);
+            }
+            token_client.transfer(&contract_address, &report.hunter, &payout_amount);
+            bounty.remaining_balance -= payout_amount;
+            if bounty.remaining_balance == 0 {
+                bounty.status = BountyStatus::Completed;
+            }
+            report.status = ReportStatus::Paid;
+            report.payout_amount = payout_amount;
+        } else {
+            if bounty.remaining_balance > 0 {
+                token_client.transfer(&contract_address, &bounty.owner, &bounty.remaining_balance);
+            }
+            bounty.remaining_balance = 0;
+            bounty.status = BountyStatus::Closed;
+            report.status = ReportStatus::Rejected;
+        }
+
+        storage::set_report(&env, &report);
+        storage::set_bounty(&env, &bounty);
+        events::dispute_resolved(&env, bounty_id, report_id, payout_hunter);
+    }
+
     pub fn claim_reward(env: Env, hunter: Address, bounty_id: u64, report_id: u64) {
         storage::require_initialized(&env);
         hunter.require_auth();
 
-        let bounty = storage::get_bounty(&env, bounty_id);
+        let mut bounty = storage::get_bounty(&env, bounty_id);
         let mut report = storage::get_report(&env, report_id);
 
         if report.hunter != hunter {
@@ -183,7 +327,10 @@ impl BugChainContract {
         token_client.transfer(&contract_address, &hunter, &bounty.reward_amount);
 
         report.status = ReportStatus::Paid;
+        report.payout_amount = bounty.reward_amount;
+        bounty.remaining_balance = 0;
         storage::set_report(&env, &report);
+        storage::set_bounty(&env, &bounty);
         events::reward_claimed(&env, bounty_id, report_id, hunter, bounty.reward_amount);
     }
 
@@ -204,11 +351,13 @@ impl BugChainContract {
 
         let contract_address = env.current_contract_address();
         let token_client = token::Client::new(&env, &bounty.asset);
-        token_client.transfer(&contract_address, &owner, &bounty.reward_amount);
+        let refund_amount = bounty.remaining_balance;
+        token_client.transfer(&contract_address, &owner, &refund_amount);
 
         bounty.status = BountyStatus::Refunded;
+        bounty.remaining_balance = 0;
         storage::set_bounty(&env, &bounty);
-        events::bounty_refunded(&env, bounty_id, owner, bounty.reward_amount);
+        events::bounty_refunded(&env, bounty_id, owner, refund_amount);
     }
 
     pub fn get_bounty(env: Env, bounty_id: u64) -> Bounty {

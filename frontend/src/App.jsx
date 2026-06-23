@@ -12,6 +12,9 @@ import ProfileSettings from './views/ProfileSettings';
 import CreateBounty from './views/CreateBounty';
 import AnalyticsDashboard from './views/AnalyticsDashboard';
 import OrganizationConsole from './views/OrganizationConsole';
+import FeedbackCenter from './views/FeedbackCenter';
+import Level4Analytics from './views/Level4Analytics';
+import UserProofsPage from './views/UserProofsPage';
 import { useAuth } from './context/AuthContext';
 
 const protectedViews = new Set([
@@ -21,6 +24,9 @@ const protectedViews = new Set([
   'create-bounty',
   'analytics',
   'organizations',
+  'feedback',
+  'level4-analytics',
+  'level4-proofs',
 ]);
 
 function App() {
@@ -44,6 +50,21 @@ function App() {
       setTimeout(() => {
         setTokenParam(token);
         setCurrentView('reset-password');
+      }, 0);
+      window.history.replaceState({}, document.title, '/');
+    } else if (path.includes('/level4/user-proofs')) {
+      setTimeout(() => {
+        setCurrentView('level4-proofs');
+      }, 0);
+      window.history.replaceState({}, document.title, '/');
+    } else if (path.includes('/level4/analytics')) {
+      setTimeout(() => {
+        setCurrentView('level4-analytics');
+      }, 0);
+      window.history.replaceState({}, document.title, '/');
+    } else if (path.includes('/feedback')) {
+      setTimeout(() => {
+        setCurrentView('feedback');
       }, 0);
       window.history.replaceState({}, document.title, '/');
     }
@@ -167,6 +188,18 @@ function App() {
 
     if (currentView === 'organizations') {
       return <OrganizationConsole />;
+    }
+
+    if (currentView === 'feedback') {
+      return <FeedbackCenter />;
+    }
+
+    if (currentView === 'level4-analytics') {
+      return <Level4Analytics />;
+    }
+
+    if (currentView === 'level4-proofs') {
+      return <UserProofsPage />;
     }
 
     return (

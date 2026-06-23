@@ -11,6 +11,13 @@ pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
 }
 
+pub fn get_admin(env: &Env) -> Address {
+    env.storage()
+        .instance()
+        .get::<DataKey, Address>(&DataKey::Admin)
+        .unwrap_or_else(|| panic_with_error!(env, BugChainError::NotInitialized))
+}
+
 pub fn require_initialized(env: &Env) {
     if !has_admin(env) {
         panic_with_error!(env, BugChainError::NotInitialized);

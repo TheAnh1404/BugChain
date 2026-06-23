@@ -19,7 +19,7 @@ export default function LandingPage({ setCurrentView, isAuthenticated }) {
       : isWrongNetwork
         ? 'Switch to Testnet'
         : wallet
-          ? shortenedAddress
+          ? `Connected: ${shortenedAddress || 'Wallet'}`
           : 'Connect Freighter';
 
   const handleWalletClick = async () => {

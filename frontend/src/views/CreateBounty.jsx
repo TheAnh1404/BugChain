@@ -4,6 +4,8 @@ import {
   createBountyOnChain,
   hashBountyMetadata,
 } from '../lib/stellar';
+import { trackEvent } from '../lib/analytics';
+import { normalizeTransactionError } from '../lib/errors';
 import { bountyService } from '../services/bountyService';
 import { organizationService } from '../services/organizationService';
 import { transactionService } from '../services/transactionService';
@@ -27,6 +29,7 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
   const [progressMessage, setProgressMessage] = useState('');
   const [createdBounty, setCreatedBounty] = useState(null);
   const [chainResult, setChainResult] = useState(null);
+  const [isSyncFailed, setIsSyncFailed] = useState(false);
   const [rewardSuggestions, setRewardSuggestions] = useState({});
   const [organizations, setOrganizations] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -75,6 +78,7 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
     setProgressMessage('');
     setCreatedBounty(null);
     setChainResult(null);
+    setIsSyncFailed(false);
 
     try {
       const rewardAsset = form.rewardAsset.trim().toUpperCase() || 'XLM';
@@ -98,6 +102,7 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
         organizationId: form.organizationId || undefined,
         projectId: form.projectId || undefined,
       });
+      setCreatedBounty(savedBounty);
 
       setProgressMessage('Creating pending transaction record...');
       const pendingTransaction = await transactionService.start({
@@ -116,7 +121,7 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
         });
       } catch (txError) {
         await transactionService.fail(pendingTransaction.id).catch(() => {});
-        throw txError;
+        throw new Error(normalizeTransactionError(txError).message, { cause: txError });
       }
 
       const trackedChainResult = {
@@ -136,6 +141,7 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
         });
       } catch (updateError) {
         setChainResult(trackedChainResult);
+        setIsSyncFailed(true);
         setError(
           `On-chain transaction succeeded, but BugChain API could not store it: ${updateError.message}`,
         );
@@ -145,10 +151,44 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
 
       setCreatedBounty(updatedBounty);
       setChainResult(trackedChainResult);
+      trackEvent('bounty_created', {
+        bountyId: updatedBounty.id,
+        txHash: trackedChainResult.txHash,
+      });
       setForm(initialForm);
       setProgressMessage('');
     } catch (err) {
       setError(err.message);
+      setProgressMessage('');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRetrySync = async () => {
+    if (!createdBounty || !chainResult) return;
+
+    setIsSubmitting(true);
+    setError('');
+    setProgressMessage('Retrying confirmed transaction sync to BugChain API...');
+
+    try {
+      const updatedBounty = await bountyService.updateOnChain(createdBounty.id, {
+        onchainBountyId: chainResult.onchainBountyId,
+        txHash: chainResult.txHash,
+        metadataHash: chainResult.metadataHash,
+        transactionId: chainResult.transactionId,
+      });
+
+      setCreatedBounty(updatedBounty);
+      setIsSyncFailed(false);
+      trackEvent('bounty_created', {
+        bountyId: updatedBounty.id,
+        txHash: chainResult.txHash,
+      });
+      setProgressMessage('');
+    } catch (err) {
+      setError(`Sync retry failed: ${err.message}`);
       setProgressMessage('');
     } finally {
       setIsSubmitting(false);
@@ -336,20 +376,40 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
 
       {chainResult && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4">
-          <div className="glass w-full max-w-2xl rounded-2xl border border-[#7c3aed]/40 p-6 shadow-2xl">
+          <div
+            className={`glass w-full max-w-2xl rounded-2xl border p-6 shadow-2xl ${
+              isSyncFailed ? 'border-amber-500/40' : 'border-[#7c3aed]/40'
+            }`}
+          >
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-mono uppercase tracking-widest text-emerald-300">
-                  Bounty Created Successfully
+                <p
+                  className={`text-xs font-mono uppercase tracking-widest ${
+                    isSyncFailed ? 'text-amber-300' : 'text-emerald-300'
+                  }`}
+                >
+                  {isSyncFailed ? 'On-chain Success, Sync Failed' : 'Bounty Created Successfully'}
                 </p>
                 <h2 className="mt-2 text-2xl font-bold text-[#e8dfee]">
-                  Reward locked on Stellar Testnet
+                  {isSyncFailed
+                    ? 'Reward locked, backend sync still pending'
+                    : 'Reward locked on Stellar Testnet'}
                 </h2>
               </div>
-              <span className="material-symbols-outlined text-emerald-300">
-                check_circle
+              <span
+                className={`material-symbols-outlined ${
+                  isSyncFailed ? 'text-amber-300' : 'text-emerald-300'
+                }`}
+              >
+                {isSyncFailed ? 'warning' : 'check_circle'}
               </span>
             </div>
+
+            {isSyncFailed && (
+              <p className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                The Stellar transaction succeeded. Retry syncing before leaving so BugChain stores the transaction hash and user proof.
+              </p>
+            )}
 
             <div className="space-y-4 rounded-xl border border-[#4a4455]/40 bg-[#100d16] p-4">
               <div>
@@ -386,13 +446,23 @@ export default function CreateBounty({ onCreated, setCurrentView }) {
               >
                 View on Stellar Expert
               </button>
+              {isSyncFailed && (
+                <button
+                  onClick={handleRetrySync}
+                  disabled={isSubmitting}
+                  className="rounded-xl bg-[#7c3aed] px-5 py-3 text-sm font-bold text-[#ede0ff] disabled:opacity-60"
+                  type="button"
+                >
+                  {isSubmitting ? 'Retrying Sync...' : 'Retry Sync'}
+                </button>
+              )}
               <button
                 onClick={() => {
-                  if (createdBounty) {
+                  if (createdBounty && !isSyncFailed) {
                     onCreated(createdBounty);
                   }
                 }}
-                disabled={!createdBounty}
+                disabled={!createdBounty || isSyncFailed}
                 className="rounded-xl bg-[#7c3aed] px-5 py-3 text-sm font-bold text-[#ede0ff] disabled:opacity-60"
                 type="button"
               >

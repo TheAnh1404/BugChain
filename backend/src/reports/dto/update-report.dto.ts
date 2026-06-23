@@ -45,4 +45,24 @@ export class UpdateReportDto {
   @IsString()
   @MaxLength(128)
   reportHash?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120000)
+  encryptedContent?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(12000)
+  encryptedAesKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  iv?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  encryptionScheme?: string;
 }

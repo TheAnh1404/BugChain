@@ -14,6 +14,7 @@ import {
   TransactionStatus,
   TransactionType,
   UserRole,
+  WalletInteractionAction,
 } from '@prisma/client';
 import { AuditLogsService } from '../audit/audit-logs.service';
 import { AuthUser } from '../common/types/auth-user.type';
@@ -22,6 +23,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReputationService } from '../reputation/reputation.service';
 import { ReportEncryptionService } from '../security/report-encryption.service';
+import { StellarValidationService } from '../security/stellar-validation.service';
+import { UserProofsService } from '../user-proofs/user-proofs.service';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
 import { UpdateReportOnChainDto, ClaimRewardDto } from './dto/update-report-onchain.dto';
@@ -49,6 +52,8 @@ const reportInclude = {
 @Injectable()
 export class ReportsService {
   private readonly encryptedPlaceholder = '[encrypted]';
+  private readonly clientEncryptionScheme = 'CLIENT_RSA_AES_GCM';
+  private readonly serverEncryptionScheme = 'SERVER_AES_GCM';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -57,6 +62,8 @@ export class ReportsService {
     private readonly notificationsService: NotificationsService,
     private readonly reputationService: ReputationService,
     private readonly reportEncryptionService: ReportEncryptionService,
+    private readonly stellarValidationService: StellarValidationService,
+    private readonly userProofsService: UserProofsService,
   ) {}
 
   async create(bountyId: string, hunter: AuthUser, dto: CreateReportDto) {
@@ -77,12 +84,25 @@ export class ReportsService {
       throw new BadRequestException('Reports can only be submitted to open bounties');
     }
 
-    const encrypted = this.reportEncryptionService.encrypt({
-      description: dto.description.trim(),
-      stepsToReproduce: dto.stepsToReproduce.trim(),
-      impact: dto.impact.trim(),
-      recommendation: dto.recommendation.trim(),
-    });
+    const clientEncrypted = this.hasClientEncryptedPayload(dto);
+    const encrypted = clientEncrypted
+      ? {
+          encryptedContent: dto.encryptedContent || '',
+          encryptedAesKey: dto.encryptedAesKey || '',
+          iv: dto.iv || '',
+          authTag: null,
+          encryptionScheme: this.clientEncryptionScheme,
+        }
+      : {
+          ...this.reportEncryptionService.encrypt({
+            description: dto.description.trim(),
+            stepsToReproduce: dto.stepsToReproduce.trim(),
+            impact: dto.impact.trim(),
+            recommendation: dto.recommendation.trim(),
+          }),
+          encryptedAesKey: null,
+          encryptionScheme: this.serverEncryptionScheme,
+        };
 
     const report = await this.prisma.$transaction(async (tx) => {
       const created = await tx.report.create({
@@ -97,6 +117,8 @@ export class ReportsService {
           impact: this.encryptedPlaceholder,
           recommendation: this.encryptedPlaceholder,
           encryptedContent: encrypted.encryptedContent,
+          encryptedAesKey: encrypted.encryptedAesKey,
+          encryptionScheme: encrypted.encryptionScheme,
           iv: encrypted.iv,
           authTag: encrypted.authTag,
           reportHash: dto.reportHash,
@@ -237,6 +259,7 @@ export class ReportsService {
 
     const txHash = dto.txHash.toLowerCase();
     const stellarExplorerUrl = dto.stellarExplorerUrl || `https://stellar.expert/explorer/testnet/tx/${txHash}`;
+    await this.stellarValidationService.validateReportSubmissionTx({ txHash });
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedReport = await tx.report.update({
@@ -287,6 +310,13 @@ export class ReportsService {
       transactionType: TransactionType.SUBMIT_REPORT,
     });
 
+    await this.userProofsService.record({
+      userId: user.id,
+      action: WalletInteractionAction.REPORT_SUBMITTED,
+      txHash,
+      stellarExplorerUrl,
+    });
+
     return this.serializeReport(updated);
   }
 
@@ -309,6 +339,7 @@ export class ReportsService {
     }
 
     const txHash = dto.txHash.toLowerCase();
+    await this.stellarValidationService.validateRewardClaimTx({ txHash });
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedReport = await tx.report.update({
@@ -358,6 +389,12 @@ export class ReportsService {
       transactionType: TransactionType.CLAIM_REWARD,
     });
 
+    await this.userProofsService.record({
+      userId: user.id,
+      action: WalletInteractionAction.REWARD_CLAIMED,
+      txHash,
+    });
+
     return this.serializeReport(updated);
   }
 
@@ -378,6 +415,19 @@ export class ReportsService {
       dto.impact !== undefined ||
       dto.recommendation !== undefined
     ) {
+      if (this.hasClientEncryptedPayload(dto)) {
+        data.description = this.encryptedPlaceholder;
+        data.stepsToReproduce = this.encryptedPlaceholder;
+        data.impact = this.encryptedPlaceholder;
+        data.recommendation = this.encryptedPlaceholder;
+        data.encryptedContent = dto.encryptedContent;
+        data.encryptedAesKey = dto.encryptedAesKey;
+        data.iv = dto.iv;
+        data.authTag = null;
+        data.encryptionScheme = this.clientEncryptionScheme;
+        return data;
+      }
+
       const current = this.reportEncryptionService.decrypt(report);
       const encrypted = this.reportEncryptionService.encrypt({
         description: dto.description?.trim() ?? current.description,
@@ -391,6 +441,8 @@ export class ReportsService {
       data.impact = this.encryptedPlaceholder;
       data.recommendation = this.encryptedPlaceholder;
       data.encryptedContent = encrypted.encryptedContent;
+      data.encryptedAesKey = null;
+      data.encryptionScheme = this.serverEncryptionScheme;
       data.iv = encrypted.iv;
       data.authTag = encrypted.authTag;
     }
@@ -475,12 +527,61 @@ export class ReportsService {
     });
   }
 
-  private serializeReport<T extends { encryptedContent?: string | null; iv?: string | null; authTag?: string | null }>(
+  private hasClientEncryptedPayload(dto: {
+    encryptedContent?: string;
+    encryptedAesKey?: string;
+    iv?: string;
+    encryptionScheme?: string;
+  }) {
+    const wantsClientEncryption = dto.encryptionScheme === this.clientEncryptionScheme;
+    if (!wantsClientEncryption) return false;
+
+    if (!dto.encryptedContent || !dto.encryptedAesKey || !dto.iv) {
+      throw new BadRequestException('Client-encrypted reports require encryptedContent, encryptedAesKey, and iv');
+    }
+
+    return true;
+  }
+
+  private serializeReport<
+    T extends {
+      encryptedContent?: string | null;
+      encryptedAesKey?: string | null;
+      encryptionScheme?: string | null;
+      iv?: string | null;
+      authTag?: string | null;
+    },
+  >(
     report: T,
   ) {
+    if (report.encryptionScheme === this.clientEncryptionScheme) {
+      const {
+        encryptedContent,
+        encryptedAesKey,
+        encryptionScheme,
+        iv,
+        authTag: _authTag,
+        ...publicReport
+      } = report;
+
+      return {
+        ...publicReport,
+        description: this.encryptedPlaceholder,
+        stepsToReproduce: this.encryptedPlaceholder,
+        impact: this.encryptedPlaceholder,
+        recommendation: this.encryptedPlaceholder,
+        encryptedContent,
+        encryptedAesKey,
+        encryptionScheme,
+        iv,
+      };
+    }
+
     const decrypted = this.reportEncryptionService.decrypt(report);
     const {
       encryptedContent: _encryptedContent,
+      encryptedAesKey: _encryptedAesKey,
+      encryptionScheme: _encryptionScheme,
       iv: _iv,
       authTag: _authTag,
       ...publicReport
